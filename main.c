@@ -103,6 +103,7 @@ typedef struct{
     dState currState;
 }DFA;
 
+// NOTE : Automation for the future.
 DFA* CreateDFA(Arena* arena){
     DFA* tempDFA;
     ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, DFA, tempDFA);
