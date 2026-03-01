@@ -143,9 +143,14 @@ DFA* CreateDFA(Arena* arena){
 }
 
 typedef enum{
-    NUMBER,
-    OPERATOR,
+    TOKEN_NUMBER,
+    TOKEN_OPERATOR,
 }TOKENS;
+
+char* TokenNames[] = {
+    "TOKEN_NUMBER",
+    "TOKEN_OPERATOR"
+};
 
 typedef struct{
     TOKENS* tokens;
@@ -221,12 +226,12 @@ dfa->currState = D_STATE_S;
             break;
         }
         case D_STATE_O: {
-            tokenizer->tok->tokens[tokenizer->tok->tokenNum] = OPERATOR;
+            tokenizer->tok->tokens[tokenizer->tok->tokenNum] = TOKEN_OPERATOR;
             tokenizer->tok->tokenNum++;
             break;
         }
         case D_STATE_I: {
-            tokenizer->tok->tokens[tokenizer->tok->tokenNum] = NUMBER;
+            tokenizer->tok->tokens[tokenizer->tok->tokenNum] = TOKEN_NUMBER;
             tokenizer->tok->tokenNum++;
             break;
         }
@@ -265,16 +270,105 @@ Tokens* StartTokenizing(Arena* arena, DFA* dfa, Tokenizer* tokenizer){
     return tokenizer->tok;
 }
 
-char* TokenNames[] = {
-    "NUMBER",
-    "OPERATOR"
-};
-
 void printTokens(Tokens* tokens){
     for(uint i = 0; i < tokens->tokenNum; i++){
         printf("Token %d : %s\n", i, TokenNames[tokens->tokens[i]]);
     }
 }
+
+/*
+
+    Simple Grammar:
+    S     -> Exp
+    Exp   -> Number NuExp
+    NuExp -> Op Exp | empty
+    Op    -> + | - | * | /
+
+    We will make a recursive descent parser for this.
+*/
+
+typedef struct {
+    Tokens* tok;
+    u16 tokenPos;
+}Parser;
+
+typedef enum {
+    FALSE,
+    TRUE
+}BoolValue;
+
+Parser* CreateParser(Arena* arena, Tokens* tok){
+    Parser* tempParser;
+    ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, Parser, tempParser);
+    if (err != ARENA_OK) {
+        printf("Couldn't build Parser!");
+    }
+    tempParser->tok = tok;
+    tempParser->tokenPos = 0;
+    return tempParser;
+}
+
+_Bool CheckOP(Parser* parser){
+    TOKENS currTok = parser->tok->tokens[parser->tokenPos];
+    if(currTok == TOKEN_OPERATOR){
+        printf("OPERATOR TOKEN AT: %d\n", parser->tokenPos++);
+        return TRUE;
+    }
+    printf("EXPECTED OP AT: %d\n",parser->tokenPos);
+    return FALSE;
+}
+
+_Bool CheckNum(Parser* parser){
+    TOKENS currTok = parser->tok->tokens[parser->tokenPos];
+    if(currTok == TOKEN_NUMBER){
+        printf("NUMBER TOKEN AT: %d\n", parser->tokenPos++);
+        return TRUE;
+    }
+    printf("EXPECTED NUM AT: %d\n",parser->tokenPos);
+    return FALSE;
+}
+
+_Bool CheckNuExp(Parser* parser);
+
+_Bool CheckExp(Parser* parser){
+    TOKENS currTok = parser->tok->tokens[parser->tokenPos];
+    u16 prevPos = parser->tokenPos;
+    if(CheckNum(parser) && CheckNuExp(parser)){
+        printf("EXPANDING EXP AT: %d\n", prevPos);
+        return TRUE;
+    }
+    parser->tokenPos = prevPos;
+    abort();
+    return FALSE;
+}
+
+_Bool CheckNuExp(Parser* parser){
+    TOKENS currTok = parser->tok->tokens[parser->tokenPos];
+    u16 prevTokPos = parser->tokenPos;
+    if((CheckOP(parser) && CheckExp(parser))){
+        return TRUE;
+    } else {
+        _Bool ParsedOP = FALSE;
+        if (parser->tokenPos != prevTokPos) {
+            ParsedOP = TRUE;
+        }
+        parser->tokenPos = prevTokPos;
+        if(parser->tokenPos >= parser->tok->tokenNum){
+            return TRUE;
+        }
+        if(ParsedOP)
+            printf("EXPECTED EOF at: %d\n",parser->tokenPos);
+        abort();
+        return FALSE;
+    }
+}
+
+void StartParsing(Parser* parser){
+    if(CheckExp(parser)){
+        printf("PARSED CORRECTLY\n");
+    }
+}
+
 
 //TODO : Write a simple Parser.
 int main(){
@@ -285,9 +379,11 @@ int main(){
         return 0;
     }
     DFA* arithDFA = CreateDFA(&LexerArena);
-    const char* sampleProgram = "5 + 3 - 1 * 123 + 32 ";
+    const char* sampleProgram = "5 + 3 - 1 * 123 33 * 32";
     Tokenizer* mainTokenizer = CreateTokenizer(&LexerArena, sampleProgram);
     Tokens* tokenizedProgram = StartTokenizing(&LexerArena, arithDFA, mainTokenizer);
     printTokens(tokenizedProgram);
+    Parser* mainParser = CreateParser(&LexerArena, tokenizedProgram);
+    StartParsing(mainParser);
     return 0;
 }
