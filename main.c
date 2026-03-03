@@ -405,6 +405,22 @@ TokenInfo TokenizeOp(DFA* dfa, Tokenizer* tokenizer){
             tok.TokenValue.operator = OP_DIV;
             break;
         }
+        case '{': {
+            tok.TokenValue.operator = OP_LC;
+            break;
+        }
+        case '}': {
+            tok.TokenValue.operator = OP_RC;
+            break;
+        }
+        case '(': {
+            tok.TokenValue.operator = OP_LP;
+            break;
+        }
+        case ')': {
+            tok.TokenValue.operator = OP_RP;
+            break;
+        }
         default: {
             FoundOperator = FALSE;
             break;
@@ -667,7 +683,7 @@ int main(){
         return 0;
     }
     DFA* arithDFA = CreateDFA(&LexerArena);
-    const char* sampleProgram = "5 + 3 - 1 * 32 + if + 12";
+    const char* sampleProgram = "5 ( 3 - 1 * 32 + 12";
     Tokenizer* mainTokenizer = CreateTokenizer(&LexerArena, sampleProgram);
     Tokens* tokenizedProgram = StartTokenizing(&LexerArena, arithDFA, mainTokenizer);
     printTokens(tokenizedProgram);
