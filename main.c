@@ -244,12 +244,12 @@ typedef enum{
     OP_MINUS,
     OP_MUL,
     OP_DIV,
-    OP_IF,
-    OP_ELSE,
     OP_LC,
     OP_RC,
     OP_LP,
-    OP_RP
+    OP_RP,
+    OP_EQ,
+    OP_SC,
 }OPERATOR_TYPE;
 
 typedef enum{
@@ -271,12 +271,12 @@ char* OperatorNames[] = {
     "MINUS",
     "MUL",
     "DIV",
-    "OP_IF",
-    "OP_ELSE",
     "OP_LC",
     "OP_RC",
     "OP_LP",
-    "OP_RP"
+    "OP_RP",
+    "OP_EQ",
+    "OP_SC"
 };
 
 char* KeyWordNames[] = {
@@ -421,6 +421,10 @@ TokenInfo TokenizeOp(DFA* dfa, Tokenizer* tokenizer){
             tok.TokenValue.operator = OP_RP;
             break;
         }
+        case ';': {
+            tok.TokenValue.operator = OP_SC;
+            break;
+        }
         default: {
             FoundOperator = FALSE;
             break;
@@ -533,6 +537,25 @@ void printTokens(Tokens* tokens){
     Op    -> + | - | * | /
 
     We will make a recursive descent parser for this.
+
+    First-try for Enhanced-ish Grammar:
+    S         -> Exp
+    Exp       -> ( Exp ) NuExp | { Exp } NuExp | AssignExp NuExp | Number NuExp | IfExp NuExp | ID NuExp   <- Only if the ID is already present. But we will think about it later.
+    NuExp     -> Op Exp | empty
+    Op        -> + | - | * | /
+    IfExp     -> If ( EXP ) EXP elsepart
+    elsepart  -> else EXP | empty
+    AssignExp -> ID = EXP
+
+    More Enhanced Grammar: <- Will add blocks for {} later.
+    S         -> Exp | Stmnt
+    Stmnt     -> AssignExp ; | IfExp ;
+    Exp       -> ( Exp ) NuExp | Number NuExp
+    AssignExp -> ID = Exp
+    NuExp     -> Op Exp | empty
+    IfExp     -> If ( Exp ) Exp elsepart
+    elsepart  -> else Exp | empty
+
 */
 
 typedef enum {
@@ -540,19 +563,32 @@ typedef enum {
     NODE_MINUS,
     NODE_MUL,
     NODE_DIV,
-    NODE_LEAF,
+    NODE_LC,
+    NODE_RC,
+    NODE_LP,
+    NODE_RP,
+    NODE_EQ,
+    NODE_IF_ELSE,
+    NODE_LEAF_NUM,
+    NODE_LEAF_ID,
+    NODE_EMPTY,
     NODE_NODES_NUM,
     NODE_INVALID
 }ASTNodeType;
 
 typedef struct ASTNode ASTNode;
-
 struct ASTNode{
     union {
         struct {
             ASTNode* leftNode;
             ASTNode* rightNode;
         }BinaryOperation;
+        struct {
+            ASTNode* conditionNode;
+            ASTNode* bodyNode;
+            ASTNode* elseBodyNode;
+        }IfElseOperation;
+        SimpleString ID;
         i64 number; // Or a value as a leaf node.
     }Value;
     ASTNodeType nodeType;
@@ -579,19 +615,21 @@ Parser* CreateParser(Arena* arena, Tokens* tok){
 ASTNode* CheckOP(Arena* arena, Parser* parser){
     TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
     if(currTok.type == TOKEN_OPERATOR){
-        ASTNode* currNode;
-        ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, ASTNode, currNode);
-        if (err != ARENA_OK) {
-            printf("Couldn't build AST: BINARY PARENT NODE!\n");
-            abort();
+        OPERATOR_TYPE op = currTok.TokenValue.operator;
+        if(op == OP_DIV || op == OP_MINUS || op == OP_MUL || op == OP_PLUS){
+            ASTNode* currNode;
+            ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, ASTNode, currNode);
+            if (err != ARENA_OK) {
+                printf("Couldn't build AST: BINARY PARENT NODE!\n");
+                abort();
+            }
+            ASTNodeType type = (ASTNodeType)parser->tok->tokens[parser->tokenPos].TokenValue.operator;
+            currNode->nodeType = type;
+            //printf("OPERATOR TOKEN AT: %d\n", parser->tokenPos);
+            parser->tokenPos++;
+            return currNode;
         }
-        ASTNodeType type = (ASTNodeType)parser->tok->tokens[parser->tokenPos].TokenValue.operator;
-        currNode->nodeType = type;
-        //printf("OPERATOR TOKEN AT: %d\n", parser->tokenPos);
-        parser->tokenPos++;
-        return currNode;
     }
-    //printf("EXPECTED OP AT: %d\n",parser->tokenPos);
     return NULL;
 }
 
@@ -606,67 +644,296 @@ ASTNode* CheckNum(Arena* arena, Parser* parser){
         }
         //printf("NUMBER TOKEN AT: %d\n", parser->tokenPos);
         currNode->Value.number = parser->tok->tokens[parser->tokenPos].TokenValue.numValue;
-        currNode->nodeType = NODE_LEAF;
+        currNode->nodeType = NODE_LEAF_NUM;
         parser->tokenPos++;
         return currNode;
     }
-    printf("EXPECTED NUM AT: %d\n",parser->tokenPos);
     return NULL;
 }
 
-ASTNode* CheckNuExp(Arena* arena, Parser* parser);
-
-ASTNode* CheckExp(Arena* arena, Parser* parser){
-    u16 prevPos = parser->tokenPos;
-    ASTNode* numNode = CheckNum(arena, parser); //5
-    if(numNode != NULL){
-        ASTNode* nuExpNode = CheckNuExp(arena, parser);
-        if(nuExpNode != NULL){
-            nuExpNode->Value.BinaryOperation.leftNode = numNode;
+_Bool CheckLParen(Parser* parser){
+    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
+    if(currTok.type == TOKEN_OPERATOR){
+        if(currTok.TokenValue.operator == OP_LP){
+            parser->tokenPos++;
+            return TRUE;
         }
-        else {
-            return numNode;
-        }
-        return nuExpNode;
+        printf("EXPECTED '(' at: %d", parser->tokenPos);
+        abort();
     }
+    return FALSE;
+}
+
+_Bool CheckRParen(Parser* parser){
+    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
+    if(currTok.type == TOKEN_OPERATOR){
+        if(currTok.TokenValue.operator == OP_RP){
+            parser->tokenPos++;
+            return TRUE;
+        }
+        printf("EXPECTED ')' at: %d", parser->tokenPos);
+        abort();
+    }
+    return FALSE;
+}
+
+_Bool CheckLCB(Parser* parser){
+    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
+    if(currTok.type == TOKEN_OPERATOR){
+        if(currTok.TokenValue.operator == OP_LC){
+            parser->tokenPos++;
+            return TRUE;
+        }
+        printf("EXPECTED '{' at: %d", parser->tokenPos);
+        abort();
+    }
+    return FALSE;
+}
+
+_Bool CheckRCB(Parser* parser){
+    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
+    if(currTok.type == TOKEN_OPERATOR){
+        if(currTok.TokenValue.operator == OP_RC){
+            parser->tokenPos++;
+            return TRUE;
+        }
+        printf("EXPECTED '}' at: %d", parser->tokenPos);
+        abort();
+    }
+    return FALSE;
+}
+
+_Bool CheckSC(Parser* parser){
+    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
+    if(currTok.type == TOKEN_OPERATOR){
+        if(currTok.TokenValue.operator == OP_SC){
+            parser->tokenPos++;
+            return TRUE;
+        }
+        printf("EXPECTED ';' at: %d", parser->tokenPos);
+        abort();
+    }
+    return FALSE;
+}
+
+ASTNode* EnCheckNuExp(Arena* arena, Parser* parser);
+
+ASTNode* EnCheckExp(Arena* arena, Parser* parser);
+
+ASTNode* CheckElsePart(Arena* arena, Parser* parser){
+    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
+    ASTNode* currNode;
+    ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, ASTNode, currNode);
+    if (err != ARENA_OK) {
+        printf("Couldn't build AST: ELSE NODE!\n");
+        abort();
+    }
+    if(currTok.type == TOKEN_KEYWORD){
+        if(currTok.TokenValue.keyword == KW_ELSE){
+            currNode = EnCheckExp(arena, parser);
+            if(CheckSC(parser))
+                return currNode;
+            printf("Expected expression at: %d", parser->tokenPos);
+            abort();
+        }
+        printf("Unexpected token at: %d", parser->tokenPos);
+        abort();
+        currNode->nodeType = NODE_IF_ELSE;
+        parser->tokenPos++;
+        return currNode;
+    }
+    currNode->nodeType = NODE_EMPTY;
+    return currNode; // Empty part.
+}
+
+
+ASTNode* CheckID(Arena* arena, Parser* parser){
+    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
+    if(currTok.type == TOKEN_ID){
+        ASTNode* currNode;
+        ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, ASTNode, currNode);
+        if (err != ARENA_OK) {
+            printf("Couldn't build AST: ID NODE!\n");
+            abort();
+        }
+        currNode->nodeType = NODE_LEAF_ID;
+        currNode->Value.ID = currTok.TokenValue.stringValue;
+        parser->tokenPos++;
+        return currNode;
+    }
+    return NULL;
+}
+
+ASTNode* CheckEqual(Arena* arena, Parser* parser){
+    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
+    if(currTok.type == TOKEN_OPERATOR){
+        ASTNode* currNode;
+        ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, ASTNode, currNode);
+        if (err != ARENA_OK) {
+            printf("Couldn't build AST: ASSIGNMENT NODE!\n");
+            abort();
+        }
+        if(currTok.TokenValue.operator == OP_EQ){
+            currNode->nodeType = NODE_EQ;
+            parser->tokenPos++;
+            return currNode;
+        }
+    }
+    printf("EXPECTED '=' at: %d", parser->tokenPos);
     abort();
 }
 
-ASTNode* CheckNuExp(Arena* arena, Parser* parser){
+ASTNode* CheckAssignExp(Arena* arena, Parser* parser){
+    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
+    ASTNode* idNode = CheckID(arena, parser);
+    if(idNode == NULL)
+        return NULL;
+    ASTNode* equalNode = CheckEqual(arena, parser);
+    ASTNode* valNode = EnCheckExp(arena, parser);
+    equalNode->Value.BinaryOperation.leftNode = idNode;
+    equalNode->Value.BinaryOperation.rightNode = valNode;
+    return equalNode;
+}
+
+ASTNode* CheckIfExp(Arena* arena, Parser* parser){
+    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
+    if(currTok.type == TOKEN_KEYWORD){
+        ASTNode* currNode;
+        ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, ASTNode, currNode);
+        if (err != ARENA_OK) {
+            printf("Couldn't build AST: KEYWORD NODE!\n");
+            abort();
+        }
+        if (currTok.TokenValue.keyword != KW_IF) {
+            printf("EXPECTED IF AT: %d", parser->tokenPos);
+            abort();
+        }
+        currNode->nodeType = NODE_IF_ELSE;
+        parser->tokenPos++;
+        _Bool isThere;
+        isThere = CheckLParen(parser);
+        if(!isThere){
+            printf("EXPECTED '(' at: %d", parser->tokenPos);
+            abort();
+        }
+        ASTNode* conditionNode = EnCheckExp(arena, parser);
+        isThere = CheckRParen(parser);
+        if(!isThere){
+            printf("EXPECTED ')' at: %d", parser->tokenPos);
+            abort();
+        }
+        ASTNode* bodyNode = EnCheckExp(arena, parser);
+        ASTNode* elsePart = CheckElsePart(arena, parser); // If it's NULL, then the other analysers will do something with it.
+        currNode->Value.IfElseOperation.conditionNode = conditionNode;
+        currNode->Value.IfElseOperation.bodyNode = bodyNode;
+        currNode->Value.IfElseOperation.elseBodyNode = elsePart;
+        return currNode;
+    }
+    return NULL;
+}
+
+ASTNode* EnCheckNuExp(Arena* arena, Parser* parser){
     u16 prevTokPos = parser->tokenPos;
     ASTNode* binaryNode = CheckOP(arena, parser);
     if(binaryNode != NULL){
-        ASTNode* expNode = CheckExp(arena, parser);
+        ASTNode* expNode = EnCheckExp(arena, parser);
         if(expNode != NULL){
             binaryNode->Value.BinaryOperation.rightNode = expNode;
             return binaryNode;
         }
-    } else if(parser->tokenPos >= parser->tok->numTokens){
-            return NULL;
+    }
+    return NULL;
+}
+
+ASTNode* EnCheckExp(Arena* arena, Parser* parser){
+    u16 prevPos = parser->tokenPos;
+    ASTNode* currNode;
+    if(CheckLParen(parser)){
+        currNode = EnCheckExp(arena, parser);
+        if(currNode == NULL){
+            printf("EXPECTED EXP at: %d", parser->tokenPos);
+            abort();
         }
-    printf("EXPECTED OP AT: %d\n", prevTokPos);
+        if(CheckRParen(parser)){
+            ASTNode* nuExpNode = EnCheckNuExp(arena, parser);
+            if(nuExpNode == NULL)
+                return currNode;
+            nuExpNode->Value.BinaryOperation.leftNode = currNode;
+            return nuExpNode;
+        } else {
+            printf("EXPECTED ')' at: %d", parser->tokenPos);
+            abort();
+        }
+    }
+    parser->tokenPos = prevPos;
+    currNode = CheckNum(arena, parser);
+    if(currNode != NULL){
+        ASTNode* nuExpNode = EnCheckNuExp(arena, parser);
+        if(nuExpNode != NULL){
+            nuExpNode->Value.BinaryOperation.leftNode = currNode;
+        }
+        else {
+            return currNode;
+        }
+        return nuExpNode;
+    }
+    if(prevPos == 0){
+        return NULL; // EMPTY PROGRAM.
+    }
+    printf("EXPECTED EXP at: %d", prevPos);
     abort();
 }
 
+ASTNode* CheckStmnt(Arena* arena, Parser* parser){
+    u16 prevPos = parser->tokenPos;
+    ASTNode* currNode;
+    currNode = CheckAssignExp(arena, parser);
+    if(currNode == NULL){
+        parser->tokenPos = prevPos;
+        currNode = CheckIfExp(arena, parser);
+    }
+    if(currNode == NULL){
+        return NULL;
+    }
+    if(CheckSC(parser))
+        return currNode;
+    else{
+        printf("EXPECTED ';' at: %d", parser->tokenPos);
+        abort();
+    }
+}
+
 void StartParsing(Arena* arena, Parser* parser){
-    parser->startNode = CheckExp(arena, parser);
+    parser->startNode = EnCheckExp(arena, parser);
+    if(parser->startNode == NULL)
+        parser->startNode = CheckStmnt(arena, parser);
     if(parser->startNode != NULL){
         printf("PARSED CORRECTLY\n");
-    }
+    } else printf("Empty program");
 }
 
 void WalkAST(Parser* parser){
     ASTNode* currNode = parser->startNode;
     ASTNode* previousNode = parser->startNode;
     while (currNode != NULL && currNode->nodeType != NODE_INVALID){
-        if(currNode->nodeType == NODE_LEAF){
+        if(currNode->nodeType == NODE_LEAF_NUM){
             printf("The value of the node is: %"PRId64"\n", currNode->Value.number);
+            if (previousNode->nodeType == NODE_IF_ELSE){
+            }
             if(currNode == previousNode->Value.BinaryOperation.rightNode){
                 printf("AST Walk Complete!\n");
                 return;
             }
             currNode = previousNode->Value.BinaryOperation.rightNode;
-        } else if (currNode->nodeType != NODE_INVALID && currNode->nodeType != NODE_NODES_NUM){
+        } else if(currNode->nodeType == NODE_LEAF_ID){
+            printf("The value of the node is: ");
+            PrintSimpleString(&currNode->Value.ID);
+            printf("\n");
+            currNode = previousNode->Value.BinaryOperation.rightNode;
+        } else if(currNode->nodeType == NODE_IF_ELSE){
+            printf("Going inside an if-else-block");
+        }
+        else if (currNode->nodeType != NODE_INVALID && currNode->nodeType != NODE_NODES_NUM){
             printf("The value of the node is: %s\n", OperatorNames[currNode->nodeType]);
             previousNode = currNode;
             currNode = currNode->Value.BinaryOperation.leftNode;
@@ -674,6 +941,7 @@ void WalkAST(Parser* parser){
     }
 }
 
+//NOTE : Language is incomplete as there is no concept of blocks.
 //TODO : Hardest thing now: Optimization and Generation of Assembly.
 int main(){
     Arena LexerArena;
@@ -683,7 +951,7 @@ int main(){
         return 0;
     }
     DFA* arithDFA = CreateDFA(&LexerArena);
-    const char* sampleProgram = "5 ( 3 - 1 * 32 + 12";
+    const char* sampleProgram = "if ( 5 ) 7 ;";
     Tokenizer* mainTokenizer = CreateTokenizer(&LexerArena, sampleProgram);
     Tokens* tokenizedProgram = StartTokenizing(&LexerArena, arithDFA, mainTokenizer);
     printTokens(tokenizedProgram);
@@ -697,7 +965,7 @@ int main(){
     Parser* mainParser = CreateParser(&ParserArena, tokenizedProgram);
     StartParsing(&ParserArena, mainParser);
     removeArena(&LexerArena);
-    WalkAST(mainParser); // Prefix notation.
+    //WalkAST(mainParser); // Prefix notation.
     removeArena(&ParserArena);
     return 0;
 }
