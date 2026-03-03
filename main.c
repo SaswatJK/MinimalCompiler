@@ -10,6 +10,10 @@
 
 /*
   digits    : 0-9
+  charLC    : a-z
+  charUC    : A-Z
+  strings   : (charLC OR charUC)+
+  keywords  : Specific Strings
   number    : digits+
   operators : + | - | *
 
@@ -22,14 +26,32 @@
   Number NFA:
 
           e                   e
-    S  --------> DigitDFA | -----> {F}
+    S  --------> DigitNFA | -----> {F}
                     ^     | e
                     |-----|
 
- Operator NFA:
+  Operator NFA:
 
          operator
     S  ------------> {F}
+
+  CharLC NFA:
+
+         a-z
+    S  ------> {F}
+
+  CharUC NFA:
+
+         A-Z
+    S  ------> {F}
+
+  Strings NFA:
+
+        e               e
+     /----- CharLCNFA -----\
+    S                      {F}
+     \----- CharUCNFA -----/
+        e               e
 
 
   Now we have to implement this for each string of characters that are divided by ' '
@@ -40,7 +62,7 @@
            e      (N)        e
         /-----  NumberNFA  -----\
        /                         \
-     (S)                         {F}
+     (S)---e-- StringsNFA(S) -e--{F}
        \                         /
         \----- OperatorNFA -----/
            e      (O)        e
@@ -49,40 +71,74 @@
   Converted DFA:
  ||Much simpler than I anticipated.||
 
-             ____
-             |  | digit
-             v  |
-         /--{I}--
-  digit /
-       /
-     (S)------------>{O}
-      |
-space |
-      |-->{F}---|
-           ^    |space
-           |----|
+                         ____
+                         |  | digit
+                         v  |
+                     /--{I}--
+              digit /
+         char      /  operator
+ {St}<-----------(S)------------>{O}
+                  |
+            space |
+                  |-->{F}---|
+                       ^    |space
+                       |----|
 
 
   DFA TABLE:
 
-St\In | Digit | Operator | space |
-   S  |  {I}  |    {O}   |  {F}  |
-  {I} |  {I}  | -------- | ----- |
-   O  | ----- | -------- | ----- |
-  {F} | ----- | -------- |  {F}  |
+St\In | Digit | Operator | Space | Char |
+   S  |  {I}  |    {O}   |  {F}  | {St} |
+  {I} |  {I}  | -------- | ----- | WR_I |
+   O  | ----- |   WR_IN  | ----- | ---- |
+  {F} | ----- | -------- |  {F}  | ---- |
+ {St} | WR_IN | -------- | ----- | {St} |
 
 */
+
+typedef struct{
+    const char* start;
+    u16 length;
+}SimpleString;
 
 typedef enum {
     FALSE,
     TRUE
 }BoolValue;
 
+
+_Bool MatchStringDirect(SimpleString* source, const char* compareTo){ // Direct because it's taking a const char pointer as a comparison to.
+    if (source->length != strlen(compareTo)){
+        return FALSE; // Maybe better types?
+    }
+    int result = memcmp(source->start, compareTo, source->length);
+    if(result == 0){
+        return TRUE;
+    }
+    return FALSE;
+}
+
+_Bool MatchStringIndirect(SimpleString* source, SimpleString* compareTo){
+    if (source->length != compareTo->length){
+        return FALSE; // Maybe better types?
+    }
+    int result = memcmp(source->start, compareTo->start, source->length);
+    if(result == 0){
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static inline void PrintSimpleString(SimpleString* source){
+    printf("%.*s", source->length, source->start);
+}
+
 typedef enum DFAStates{
     D_STATE_S,
     D_STATE_I,
     D_STATE_O,
     D_STATE_F,
+    D_STATE_ST,
     DFAStatesNum,
     D_STATE_WRONG_INPUT,
     D_STATE_NOT_ERROR_STATE
@@ -93,6 +149,7 @@ const char* DFAStateNames[] = {
     "D_STATE_I",
     "D_STATE_O",
     "D_STATE_F",
+    "D_STATE_ST",
     "DFAStatesNum",
     "D_STATE_WRONG_INPUT",
     "D_STATE_NOT_ERROR_STATE"
@@ -102,6 +159,7 @@ typedef enum DFAInputs{
     Digit,
     Operator,
     Space,
+    Character,
     DFAInputNum
 }dInput;
 
@@ -119,33 +177,56 @@ DFA* CreateDFA(Arena* arena){
         abort();
     }
     int tableIndex;
+    // First row.
     tableIndex = D_STATE_S * DFAInputNum + Digit;
     tempDFA->state[tableIndex] = D_STATE_I;
     tableIndex++;
     tempDFA->state[tableIndex] = D_STATE_O;
     tableIndex++;
     tempDFA->state[tableIndex] = D_STATE_F;
+    tableIndex++;
+    tempDFA->state[tableIndex] = D_STATE_ST;
 
+    // Second row.
     tableIndex = D_STATE_I * DFAInputNum + Digit;
     tempDFA->state[tableIndex] = D_STATE_I;
     tableIndex++;
-    tempDFA->state[tableIndex] = D_STATE_WRONG_INPUT;
+    tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
     tableIndex++;
     tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
+    tableIndex++;
+    tempDFA->state[tableIndex] = D_STATE_WRONG_INPUT; // Can't have number concatenated with characters, that start from numbers. (Even the inverse isn't supported right now.
 
+    // Third row.
     tableIndex = D_STATE_O * DFAInputNum + Digit;
-    tempDFA->state[tableIndex] = D_STATE_WRONG_INPUT;
+    tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
     tableIndex++;
     tempDFA->state[tableIndex] = D_STATE_WRONG_INPUT;
     tableIndex++;
     tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
+    tableIndex++;
+    tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
 
+    // Fourth row.
     tableIndex = D_STATE_F * DFAInputNum + Digit;
     tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
     tableIndex++;
     tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
     tableIndex++;
     tempDFA->state[tableIndex] = D_STATE_F;
+    tableIndex++;
+    tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
+
+    // I'd actually want there to be string123, but will make it happen letter.
+    tableIndex = D_STATE_ST * DFAInputNum + Digit;
+    tempDFA->state[tableIndex] = D_STATE_WRONG_INPUT;
+    tableIndex++;
+    tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
+    tableIndex++;
+    tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
+    tableIndex++;
+    tempDFA->state[tableIndex] = D_STATE_ST;
+
     printf("Made simple arithematic DFA!\n");
     return tempDFA;
 }
@@ -153,33 +234,64 @@ DFA* CreateDFA(Arena* arena){
 typedef enum{
     TOKEN_NUMBER,
     TOKEN_OPERATOR,
+    TOKEN_KEYWORD,
+    TOKEN_ID,
+    TOKEN_NONE,
 }TOKEN_TYPE;
 
 typedef enum{
     OP_PLUS,
     OP_MINUS,
     OP_MUL,
-    OP_DIV
+    OP_DIV,
+    OP_IF,
+    OP_ELSE,
+    OP_LC,
+    OP_RC,
+    OP_LP,
+    OP_RP
 }OPERATOR_TYPE;
+
+typedef enum{
+    KW_IF,
+    KW_ELSE,
+    KWS_NUM, // Number of keywords
+}KEYWORD_TYPE;
 
 char* TokenNames[] = {
     "TOKEN_NUMBER",
-    "TOKEN_OPERATOR"
+    "TOKEN_OPERATOR",
+    "TOKEN_KEYWORD",
+    "TOKEN_ID",
+    "TOKEN_NONE"
 };
 
 char* OperatorNames[] = {
     "PLUS",
     "MINUS",
     "MUL",
-    "DIV"
+    "DIV",
+    "OP_IF",
+    "OP_ELSE",
+    "OP_LC",
+    "OP_RC",
+    "OP_LP",
+    "OP_RP"
+};
+
+char* KeyWordNames[] = {
+    "if",
+    "else"
 };
 
 typedef struct{
     TOKEN_TYPE type;
     union {
+        SimpleString stringValue;
         i64 numValue;
         OPERATOR_TYPE operator;
-    }TokenValue;
+        KEYWORD_TYPE keyword;
+    } TokenValue;
 }TokenInfo;
 
 typedef struct{
@@ -218,6 +330,7 @@ void SkipSpaces(DFA* dfa, Tokenizer* tokenizer){
 
 TokenInfo TokenizeNumber(DFA* dfa, Tokenizer* tokenizer){
     TokenInfo tok;
+    tok.type = TOKEN_NONE;
     char currChar = tokenizer->inputStream[tokenizer->pos];
     if (!isdigit(currChar)){
         return tok;
@@ -235,8 +348,44 @@ TokenInfo TokenizeNumber(DFA* dfa, Tokenizer* tokenizer){
     return tok;
 }
 
+TokenInfo TokenizeString(DFA* dfa, Tokenizer* tokenizer){
+    TokenInfo tok;
+    tok.type = TOKEN_NONE;
+    char currChar = tokenizer->inputStream[tokenizer->pos];
+    if (!isalpha(currChar)){
+        return tok;
+    }
+    u16 startPos = tokenizer->pos;
+    u16 lengthString = 0;
+    while (isalpha(currChar)){
+        tokenizer->pos++;
+        currChar = tokenizer->inputStream[tokenizer->pos];
+        lengthString++;
+    }
+    SimpleString sourceString;
+    sourceString.start = &tokenizer->inputStream[(int)startPos];
+    sourceString.length = lengthString;
+    i16 matchedString = -1;
+    for (u16 i = 0; i < KWS_NUM; i++){
+        _Bool match = MatchStringDirect(&sourceString, KeyWordNames[i]);
+        if(match)
+            matchedString = i;
+    }
+    if (matchedString != -1){ // It's a keyword.
+        tok.type = TOKEN_KEYWORD;
+        tok.TokenValue.keyword = matchedString;
+    } else {
+        tok.type = TOKEN_ID;
+        tok.TokenValue.stringValue = sourceString;
+    }
+    int lookupIndex = dfa->currState * DFAInputNum + Character;
+    dfa->currState = dfa->state[lookupIndex];
+    return tok;
+}
+
 TokenInfo TokenizeOp(DFA* dfa, Tokenizer* tokenizer){
     TokenInfo tok;
+    tok.type = TOKEN_NONE;
     char currChar = tokenizer->inputStream[tokenizer->pos];
     _Bool FoundOperator = TRUE;
     switch(currChar){
@@ -274,8 +423,7 @@ TokenInfo TokenizeOp(DFA* dfa, Tokenizer* tokenizer){
 void AnalyzeState(DFA* dfa, Tokenizer* tokenizer, TokenInfo info){
     switch(dfa->currState){
         case D_STATE_NOT_ERROR_STATE: {
-            int i;
-dfa->currState = D_STATE_S;
+            dfa->currState = D_STATE_S;
             break;
         }
         case D_STATE_F: {
@@ -297,8 +445,15 @@ dfa->currState = D_STATE_S;
             tokenizer->tok->numTokens++;
             break;
         }
+        case D_STATE_ST: {
+            tokenizer->tok->tokens[tokenizer->tok->numTokens].type = info.type;
+            tokenizer->tok->tokens[tokenizer->tok->numTokens].TokenValue = info.TokenValue;
+            tokenizer->tok->numTokens++;
+            break;
+        }
         case D_STATE_WRONG_INPUT: {
             printf("Wrong token at: %d\n", tokenizer->pos);
+            printf("Token type is: %s\n", TokenNames[info.type]);
             abort();
         }
         case DFAStatesNum: {
@@ -324,8 +479,9 @@ Tokens* StartTokenizing(Arena* arena, DFA* dfa, Tokenizer* tokenizer){
     while (currChar != '\0'){
         TokenInfo info;
         SkipSpaces(dfa, tokenizer);
-        info = TokenizeNumber(dfa, tokenizer);
-        info = TokenizeOp(dfa, tokenizer);
+        if ((info = TokenizeNumber(dfa, tokenizer)).type == TOKEN_NONE)
+            if ((info = TokenizeOp(dfa, tokenizer)).type == TOKEN_NONE)
+                info = TokenizeString(dfa, tokenizer);
         AnalyzeState(dfa, tokenizer, info);
         currChar = tokenizer->inputStream[tokenizer->pos];
     }
@@ -340,8 +496,14 @@ void printTokens(Tokens* tokens){
         TOKEN_TYPE type = tokens->tokens[i].type;
         if(type == TOKEN_NUMBER){
             printf("Token %d : %s : %"PRId64"\n", i, TokenNames[tokens->tokens[i].type], tokens->tokens[i].TokenValue.numValue);
-        } else {
+        } else if(type == TOKEN_OPERATOR)  {
             printf("Token %d : %s : %s\n", i, TokenNames[tokens->tokens[i].type], OperatorNames[tokens->tokens[i].TokenValue.operator]);
+        } else if(type == TOKEN_KEYWORD) {
+            printf("Token %d : %s : %s\n", i, TokenNames[tokens->tokens[i].type], KeyWordNames[tokens->tokens[i].TokenValue.keyword]);
+        } else if (type == TOKEN_ID) {
+            printf("Token %d : %s : ", i, TokenNames[tokens->tokens[i].type]);
+            PrintSimpleString(&tokens->tokens[i].TokenValue.stringValue);
+            printf("\n");
         }
     }
 }
@@ -505,7 +667,7 @@ int main(){
         return 0;
     }
     DFA* arithDFA = CreateDFA(&LexerArena);
-    const char* sampleProgram = "5 + 3 - 1 * 32 + 147984795 -  12";
+    const char* sampleProgram = "5 + 3 - 1 * 32 + if + 12";
     Tokenizer* mainTokenizer = CreateTokenizer(&LexerArena, sampleProgram);
     Tokens* tokenizedProgram = StartTokenizing(&LexerArena, arithDFA, mainTokenizer);
     printTokens(tokenizedProgram);
