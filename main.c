@@ -229,7 +229,7 @@ TokenInfo TokenizeNumber(DFA* dfa, Tokenizer* tokenizer){
     }
     tok.TokenValue.numValue = atoi(&tokenizer->inputStream[startPos]);
     tok.type = TOKEN_NUMBER;
-    printf("Gathered digits at pos with currentState: %s\n", DFAStateNames[dfa->currState]);
+    //printf("Gathered digits at pos with currentState: %s\n", DFAStateNames[dfa->currState]);
     int lookupIndex = dfa->currState * DFAInputNum + Digit;
     dfa->currState = dfa->state[lookupIndex];
     return tok;
@@ -262,7 +262,7 @@ TokenInfo TokenizeOp(DFA* dfa, Tokenizer* tokenizer){
         }
     }
     if(FoundOperator){
-        printf("Tokenizing operator at pos:%d with currentState: %s, and current operator: %c\n", tokenizer->pos, DFAStateNames[dfa->currState], currChar);
+        //printf("Tokenizing operator at pos:%d with currentState: %s, and current operator: %c\n", tokenizer->pos, DFAStateNames[dfa->currState], currChar);
         tokenizer->pos++;
         int lookupIndex = dfa->currState * DFAInputNum + Operator;
         tok.type = TOKEN_OPERATOR;
@@ -320,7 +320,7 @@ Tokens* StartTokenizing(Arena* arena, DFA* dfa, Tokenizer* tokenizer){
     char currChar = tokenizer->inputStream[0];
     dfa->currState = D_STATE_S;
     printf("Starting tokenizing:\n");
-    printf("    %s\n", tokenizer->inputStream);
+    printf("    \"%s\"\n", tokenizer->inputStream);
     while (currChar != '\0'){
         TokenInfo info;
         SkipSpaces(dfa, tokenizer);
@@ -409,11 +409,11 @@ ASTNode* CheckOP(Arena* arena, Parser* parser){
         }
         ASTNodeType type = (ASTNodeType)parser->tok->tokens[parser->tokenPos].TokenValue.operator;
         currNode->nodeType = type;
-        printf("OPERATOR TOKEN AT: %d\n", parser->tokenPos);
+        //printf("OPERATOR TOKEN AT: %d\n", parser->tokenPos);
         parser->tokenPos++;
         return currNode;
     }
-    printf("EXPECTED OP AT: %d\n",parser->tokenPos);
+    //printf("EXPECTED OP AT: %d\n",parser->tokenPos);
     return NULL;
 }
 
@@ -426,7 +426,7 @@ ASTNode* CheckNum(Arena* arena, Parser* parser){
             printf("Couldn't build AST: LEAF NUM NODE!\n");
             abort();
         }
-        printf("NUMBER TOKEN AT: %d\n", parser->tokenPos);
+        //printf("NUMBER TOKEN AT: %d\n", parser->tokenPos);
         currNode->Value.number = parser->tok->tokens[parser->tokenPos].TokenValue.numValue;
         currNode->nodeType = NODE_LEAF;
         parser->tokenPos++;
@@ -449,7 +449,6 @@ ASTNode* CheckExp(Arena* arena, Parser* parser){
         else {
             return numNode;
         }
-        printf("EXPANDING EXP AT: %d\n", prevPos);
         return nuExpNode;
     }
     abort();
@@ -467,6 +466,7 @@ ASTNode* CheckNuExp(Arena* arena, Parser* parser){
     } else if(parser->tokenPos >= parser->tok->numTokens){
             return NULL;
         }
+    printf("EXPECTED OP AT: %d\n", prevTokPos);
     abort();
 }
 
@@ -499,18 +499,27 @@ void WalkAST(Parser* parser){
 //TODO : Hardest thing now: Optimization and Generation of Assembly.
 int main(){
     Arena LexerArena;
-    ARENA_ERROR err = makeArena(&LexerArena, KiB(10));
+    ARENA_ERROR err = makeArena(&LexerArena, KiB(1));
     if(err != ARENA_OK){
-        printf("Can't make arena");
+        printf("Can't make Lexer Arena");
         return 0;
     }
     DFA* arithDFA = CreateDFA(&LexerArena);
-    const char* sampleProgram = "5 + 3 - 1";
+    const char* sampleProgram = "5 + 3 - 1 * 32 + 147984795 -  12";
     Tokenizer* mainTokenizer = CreateTokenizer(&LexerArena, sampleProgram);
     Tokens* tokenizedProgram = StartTokenizing(&LexerArena, arithDFA, mainTokenizer);
     printTokens(tokenizedProgram);
-    Parser* mainParser = CreateParser(&LexerArena, tokenizedProgram);
-    StartParsing(&LexerArena, mainParser);
-    WalkAST(mainParser);
+    // Making 2 different arenas becauses the info from the Lexer's tokenized table will be copied and transformed in the parser.
+    Arena ParserArena;
+    err = makeArena(&ParserArena, KiB(5));
+    if(err != ARENA_OK){
+        printf("Can't make Parser Arena");
+        return 0;
+    }
+    Parser* mainParser = CreateParser(&ParserArena, tokenizedProgram);
+    StartParsing(&ParserArena, mainParser);
+    removeArena(&LexerArena);
+    WalkAST(mainParser); // Prefix notation.
+    removeArena(&ParserArena);
     return 0;
 }

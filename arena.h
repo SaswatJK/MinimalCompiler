@@ -31,20 +31,20 @@ typedef u8 byte;
 #define MiB(x) ((x) * 1024ULL * 1024ULL)
 #define GiB(x) ((x) * 1024ULL * 1024ULL * 1024ULL)
 
-#define PUSH_ARRAY_IN_ARENA(arena, type, num, dataPointer, newPointer) pushData((arena), (dataPointer), (num) * sizeof(type), (void**)(&(newPointer)))
 // Insert the Array directly in the arena. By doing a memcpy.
+#define PUSH_ARRAY_IN_ARENA(arena, type, num, dataPointer, newPointer) pushData((arena), (dataPointer), (num) * sizeof(type), (void**)(&(newPointer)))
+// Push the pointer of the arena forward, but receieve a pointer to the start of the empty region.
 #define PUSH_EMPTY_ARRAY_IN_ARENA(arena, type, num, newPointer) pushData((arena), NULL, (num) * sizeof(type), (void**)(&(newPointer)))
-// Push the pointer of the arena forward, but receieve a pointer to the start of the empty region.
-#define PUSH_OBJECT_IN_ARENA(arena, type, dataPointer, newPointer) pushData((arena), (dataPointer), sizeof(type), (void**)(&(newPointer)))
 // Insert an obect directly in the arena. By doing a memcpy again.
-#define PUSH_EMPTY_OBJECT_IN_ARENA(arena, type, newPointer) pushData((arena), NULL, sizeof(type), (void**)(&(newPointer)))
+#define PUSH_OBJECT_IN_ARENA(arena, type, dataPointer, newPointer) pushData((arena), (dataPointer), sizeof(type), (void**)(&(newPointer)))
 // Push the pointer of the arena forward, but receieve a pointer to the start of the empty region.
-#define POP_DATA_IN_ARENA(arena, type, num) popData((arena),(num) * sizeof(type))
+#define PUSH_EMPTY_OBJECT_IN_ARENA(arena, type, newPointer) pushData((arena), NULL, sizeof(type), (void**)(&(newPointer)))
 // Pop data in arena.
-#define GET_POINTER_IN_ARENA(arena, type, newPointer) castPointer((arena), (void**)(&(newPointer)))
+#define POP_DATA_IN_ARENA(arena, type, num) popData((arena),(num) * sizeof(type))
 // Get the pointer of the arena.
-#define PUSH_POINTER_IN_ARENA(arena, type, num) pushPointer((arena), sizeof(type) * (num))
+#define GET_POINTER_IN_ARENA(arena, type, newPointer) castPointer((arena), (void**)(&(newPointer)))
 // Like Pushing empty but more freedom.
+#define PUSH_POINTER_IN_ARENA(arena, type, num) pushPointer((arena), sizeof(type) * (num))
 
 typedef struct ArenaStruct{
     u64 arenaSize; // Size of arena.
