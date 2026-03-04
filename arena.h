@@ -4,8 +4,9 @@
 #include <string.h>
 #include <sys/types.h>
 
+//TODO : Add a debug macro that changes the definition of functions to print information about the arena, each time the arena is used.
 typedef enum{
-    ARENA_NO_SPACE_FOR_COMMIT = 322,
+    ARENA_NO_SPACE_FOR_COMMIT,
     ARENA_NO_SPACE_FOR_DATA,
     ARENA_CREATION_FAILURE,
     ARENA_COMMIT_FAILURE,
@@ -14,6 +15,17 @@ typedef enum{
     ARENA_CANT_DELETE_NULL,
     ARENA_OK
 }ARENA_ERROR;
+
+static const char* ArenaErrorNames[] = {
+    "ARENA_NO_SPACE_FOR_COMMIT",
+    "ARENA_NO_SPACE_FOR_DATA",
+    "ARENA_CREATION_FAILURE",
+    "ARENA_COMMIT_FAILURE",
+    "ARENA_FREE_FAILURE",
+    "ARENA_CANT_DELETE_RESERVED",
+    "ARENA_CANT_DELETE_NULL",
+    "ARENA_OK"
+};
 
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -60,3 +72,4 @@ ARENA_ERROR popData(Arena* arena, u64 sizeInBytes); // Since we want to pop item
 ARENA_ERROR removeArena(Arena* arena);
 ARENA_ERROR pushPointer(Arena* arena, u32 offsetInBytes);
 ARENA_ERROR castPointer(Arena* arena, void** outMemoryPointer);
+void printArenaInfo(Arena* arena);

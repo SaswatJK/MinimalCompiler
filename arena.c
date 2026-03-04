@@ -1,4 +1,6 @@
 #include "arena.h"
+#include <stdio.h>
+#include <inttypes.h>
 
 ARENA_ERROR makeArena(Arena* arena, u64 sizeInBytes){
     void* tempAddress = malloc(sizeInBytes);
@@ -23,6 +25,7 @@ ARENA_ERROR pushData(Arena* arena, void* data, u64 sizeInBytes, void** outMemory
     *outMemoryPointer = arena->arenaLatestPointer;
     arena->arenaLatestPointer = (void*)(newAddress);
     arena->arenaSizeLeftInCommitted = arena->arenaSizeLeftInCommitted - sizeInBytes;
+    //printArenaInfo(arena);
     return ARENA_OK;
 }
 
@@ -55,5 +58,11 @@ ARENA_ERROR pushPointer(Arena* arena, u32 offsetInBytes){
     byte* newArenaPointer = (byte*)(arena->arenaLatestPointer) + offsetInBytes;
     arena->arenaLatestPointer = (void*)(newArenaPointer);
     return ARENA_OK;
+}
+
+void printArenaInfo(Arena* arena){
+    fprintf(stderr, "arenaSize: %"PRIu64"\n", arena->arenaSize);
+    fprintf(stderr, "arenaSizeCommitted: %"PRIu64"\n", arena->arenaSizeCommitted);
+    fprintf(stderr, "arenaSizeLeftInCommitted: %"PRIu64"\n", arena->arenaSizeLeftInCommitted);
 }
 
