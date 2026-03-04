@@ -130,7 +130,7 @@ _Bool MatchStringIndirect(SimpleString* source, SimpleString* compareTo){
 }
 
 static inline void PrintSimpleString(SimpleString* source){
-    printf("%.*s", source->length, source->start);
+    fprintf(stderr, "%.*s", source->length, source->start);
 }
 
 typedef enum DFAStates{
@@ -173,7 +173,8 @@ DFA* CreateDFA(Arena* arena){
     DFA* tempDFA;
     ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, DFA, tempDFA);
     if (err != ARENA_OK) {
-        printf("Couldn't build DFA!");
+        fprintf(stderr, "Couldn't build DFA: %s", ArenaErrorNames[err]);
+        printArenaInfo(arena);
         abort();
     }
     int tableIndex;
@@ -195,13 +196,13 @@ DFA* CreateDFA(Arena* arena){
     tableIndex++;
     tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
     tableIndex++;
-    tempDFA->state[tableIndex] = D_STATE_WRONG_INPUT; // Can't have number concatenated with characters, that start from numbers. (Even the inverse isn't supported right now.
+    tempDFA->state[tableIndex] = D_STATE_WRONG_INPUT; // Can't have number concatenated with characters, that start from numbers. (Even the inverse isn't supported righ t now.
 
     // Third row.
     tableIndex = D_STATE_O * DFAInputNum + Digit;
     tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
     tableIndex++;
-    tempDFA->state[tableIndex] = D_STATE_WRONG_INPUT;
+    tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
     tableIndex++;
     tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
     tableIndex++;
@@ -227,7 +228,7 @@ DFA* CreateDFA(Arena* arena){
     tableIndex++;
     tempDFA->state[tableIndex] = D_STATE_ST;
 
-    printf("Made simple arithematic DFA!\n");
+    fprintf(stderr, "Made simple arithematic DFA!\n");
     return tempDFA;
 }
 
@@ -309,12 +310,13 @@ Tokenizer* CreateTokenizer(Arena* arena, const char* inputStream){
     Tokenizer* tempTokenizer;
     ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, Tokenizer, tempTokenizer);
     if (err != ARENA_OK) {
-        printf("Couldn't build Tokenizer!");
+        fprintf(stderr, "Couldn't build Tokenizer: %s", ArenaErrorNames[err]);
+        printArenaInfo(arena);
         abort();
     }
     tempTokenizer->pos = 0;
     tempTokenizer->inputStream = inputStream;
-    printf("Made simple tokenizer!\n");
+    fprintf(stderr, "Made simple tokenizer!\n");
     return tempTokenizer;
 }
 
@@ -342,7 +344,7 @@ TokenInfo TokenizeNumber(DFA* dfa, Tokenizer* tokenizer){
     }
     tok.TokenValue.numValue = atoi(&tokenizer->inputStream[startPos]);
     tok.type = TOKEN_NUMBER;
-    //printf("Gathered digits at pos with currentState: %s\n", DFAStateNames[dfa->currState]);
+    //fprintf(stderr, "Gathered digits at pos with currentState: %s\n", DFAStateNames[dfa->currState]);
     int lookupIndex = dfa->currState * DFAInputNum + Digit;
     dfa->currState = dfa->state[lookupIndex];
     return tok;
@@ -431,7 +433,7 @@ TokenInfo TokenizeOp(DFA* dfa, Tokenizer* tokenizer){
         }
     }
     if(FoundOperator){
-        //printf("Tokenizing operator at pos:%d with currentState: %s, and current operator: %c\n", tokenizer->pos, DFAStateNames[dfa->currState], currChar);
+        //fprintf(stderr, "Tokenizing operator at pos:%d with currentState: %s, and current operator: %c\n", tokenizer->pos, DFAStateNames[dfa->currState], currChar);
         tokenizer->pos++;
         int lookupIndex = dfa->currState * DFAInputNum + Operator;
         tok.type = TOKEN_OPERATOR;
@@ -447,7 +449,7 @@ void AnalyzeState(DFA* dfa, Tokenizer* tokenizer, TokenInfo info){
             break;
         }
         case D_STATE_F: {
-            printf("Somehow, at pos: %d, the tokenizer reached final state.\n", tokenizer->pos);
+            fprintf(stderr, "Somehow, at pos: %d, the tokenizer reached final state.\n", tokenizer->pos);
             break;
         }
         case D_STATE_S: {
@@ -457,27 +459,30 @@ void AnalyzeState(DFA* dfa, Tokenizer* tokenizer, TokenInfo info){
             tokenizer->tok->tokens[tokenizer->tok->numTokens].type = TOKEN_OPERATOR;
             tokenizer->tok->tokens[tokenizer->tok->numTokens].TokenValue = info.TokenValue;
             tokenizer->tok->numTokens++;
+            dfa->currState = D_STATE_S;
             break;
         }
         case D_STATE_I: {
             tokenizer->tok->tokens[tokenizer->tok->numTokens].type = TOKEN_NUMBER;
             tokenizer->tok->tokens[tokenizer->tok->numTokens].TokenValue = info.TokenValue;
             tokenizer->tok->numTokens++;
+            dfa->currState = D_STATE_S;
             break;
         }
         case D_STATE_ST: {
             tokenizer->tok->tokens[tokenizer->tok->numTokens].type = info.type;
             tokenizer->tok->tokens[tokenizer->tok->numTokens].TokenValue = info.TokenValue;
             tokenizer->tok->numTokens++;
+            dfa->currState = D_STATE_S;
             break;
         }
         case D_STATE_WRONG_INPUT: {
-            printf("Wrong token at: %d\n", tokenizer->pos);
-            printf("Token type is: %s\n", TokenNames[info.type]);
+            fprintf(stderr, "Wrong token at: %d\n", tokenizer->pos);
+            fprintf(stderr, "Token type is: %s\n", TokenNames[info.type]);
             abort();
         }
         case DFAStatesNum: {
-            printf("Wrong table due to: %d\n", tokenizer->pos);
+            fprintf(stderr, "Wrong table due to: %d\n", tokenizer->pos);
             abort();
         }
     }
@@ -486,7 +491,8 @@ void AnalyzeState(DFA* dfa, Tokenizer* tokenizer, TokenInfo info){
 Tokens* StartTokenizing(Arena* arena, DFA* dfa, Tokenizer* tokenizer){
     ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, Tokens, tokenizer->tok);
     if (err != ARENA_OK) {
-        printf("Couldn't allocate list of tokens!");
+        fprintf(stderr, "Couldn't allocate list of tokens: %s", ArenaErrorNames[err]);
+        printArenaInfo(arena);
         abort();
     }
     tokenizer->tok->numTokens = 0;
@@ -494,8 +500,8 @@ Tokens* StartTokenizing(Arena* arena, DFA* dfa, Tokenizer* tokenizer){
     GET_POINTER_IN_ARENA(arena, TOKENS, tokenizer->tok->tokens);
     char currChar = tokenizer->inputStream[0];
     dfa->currState = D_STATE_S;
-    printf("Starting tokenizing:\n");
-    printf("    \"%s\"\n", tokenizer->inputStream);
+    fprintf(stderr, "Starting tokenizing:\n");
+    fprintf(stderr, "    \"%s\"\n", tokenizer->inputStream);
     while (currChar != '\0'){
         TokenInfo info;
         SkipSpaces(dfa, tokenizer);
@@ -505,7 +511,7 @@ Tokens* StartTokenizing(Arena* arena, DFA* dfa, Tokenizer* tokenizer){
         AnalyzeState(dfa, tokenizer, info);
         currChar = tokenizer->inputStream[tokenizer->pos];
     }
-    printf("Tokenization successful with %d tokens\n", tokenizer->tok->numTokens);
+    fprintf(stderr, "Tokenization successful with %d tokens\n", tokenizer->tok->numTokens);
     PUSH_EMPTY_ARRAY_IN_ARENA(arena, TokenInfo, tokenizer->tok->numTokens, tokenizer->tok->tokens);
     // Rememebr to push the pointer.
     return tokenizer->tok;
@@ -515,15 +521,15 @@ void printTokens(Tokens* tokens){
     for(uint i = 0; i < tokens->numTokens; i++){
         TOKEN_TYPE type = tokens->tokens[i].type;
         if(type == TOKEN_NUMBER){
-            printf("Token %d : %s : %"PRId64"\n", i, TokenNames[tokens->tokens[i].type], tokens->tokens[i].TokenValue.numValue);
+            fprintf(stderr, "Token %d : %s : %"PRId64"\n", i, TokenNames[tokens->tokens[i].type], tokens->tokens[i].TokenValue.numValue);
         } else if(type == TOKEN_OPERATOR)  {
-            printf("Token %d : %s : %s\n", i, TokenNames[tokens->tokens[i].type], OperatorNames[tokens->tokens[i].TokenValue.operator]);
+            fprintf(stderr, "Token %d : %s : %s\n", i, TokenNames[tokens->tokens[i].type], OperatorNames[tokens->tokens[i].TokenValue.operator]);
         } else if(type == TOKEN_KEYWORD) {
-            printf("Token %d : %s : %s\n", i, TokenNames[tokens->tokens[i].type], KeyWordNames[tokens->tokens[i].TokenValue.keyword]);
+            fprintf(stderr, "Token %d : %s : %s\n", i, TokenNames[tokens->tokens[i].type], KeyWordNames[tokens->tokens[i].TokenValue.keyword]);
         } else if (type == TOKEN_ID) {
-            printf("Token %d : %s : ", i, TokenNames[tokens->tokens[i].type]);
+            fprintf(stderr, "Token %d : %s : ", i, TokenNames[tokens->tokens[i].type]);
             PrintSimpleString(&tokens->tokens[i].TokenValue.stringValue);
-            printf("\n");
+            fprintf(stderr, "\n");
         }
     }
 }
@@ -556,6 +562,18 @@ void printTokens(Tokens* tokens){
     IfExp     -> If ( Exp ) Exp elsepart
     elsepart  -> else Exp | empty
 
+    More More Enhanced Grammar:
+    S         -> Exp | Block
+    Block     -> { Stmnt }
+    Stmnt     -> AssignExp NuStmnt | IfExp NuStmnt | empty NuStmnt
+    NuStmnt   -> ; Stmnt | empty   <- It will only look for another statement if there's already a semicolon.
+    Exp       -> Factor NuExp | Number NuExp
+    Factor    -> ( Exp )
+    AssignExp -> ID = Exp
+    NuExp     -> Op Exp | empty
+    IfExp     -> If ( Exp ) Exp elsepart
+    elsepart  -> else Exp | empty
+
 */
 
 typedef enum {
@@ -573,6 +591,7 @@ typedef enum {
     NODE_LEAF_ID,
     NODE_EMPTY,
     NODE_NODES_NUM,
+    NODE_STMNT,
     NODE_INVALID
 }ASTNodeType;
 
@@ -588,6 +607,10 @@ struct ASTNode{
             ASTNode* bodyNode;
             ASTNode* elseBodyNode;
         }IfElseOperation;
+        struct {
+            ASTNode* currentStmnt;
+            ASTNode* nextStmnt;
+        }StmtOperation;
         SimpleString ID;
         i64 number; // Or a value as a leaf node.
     }Value;
@@ -604,7 +627,8 @@ Parser* CreateParser(Arena* arena, Tokens* tok){
     Parser* tempParser;
     ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, Parser, tempParser);
     if (err != ARENA_OK) {
-        printf("Couldn't build Parser!");
+        fprintf(stderr, "Couldn't build Parser: %s", ArenaErrorNames[err]);
+        printArenaInfo(arena);
         abort();
     }
     tempParser->tok = tok;
@@ -612,7 +636,68 @@ Parser* CreateParser(Arena* arena, Tokens* tok){
     return tempParser;
 }
 
+_Bool CheckLParen(Parser* parser){
+    fprintf(stderr, "Checking LP at: %d\n", parser->tokenPos);
+    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
+    if(currTok.type == TOKEN_OPERATOR){
+        if(currTok.TokenValue.operator == OP_LP){
+            parser->tokenPos++;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+_Bool CheckRParen(Parser* parser){
+    fprintf(stderr, "Checking RP part at: %d\n", parser->tokenPos);
+    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
+    if(currTok.type == TOKEN_OPERATOR){
+        if(currTok.TokenValue.operator == OP_RP){
+            parser->tokenPos++;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+_Bool CheckLCB(Parser* parser){
+    fprintf(stderr, "Checking LCB part at: %d\n", parser->tokenPos);
+    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
+    if(currTok.type == TOKEN_OPERATOR){
+        if(currTok.TokenValue.operator == OP_LC){
+            parser->tokenPos++;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+_Bool CheckRCB(Parser* parser){
+    fprintf(stderr, "Checking RCB part at: %d\n", parser->tokenPos);
+    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
+    if(currTok.type == TOKEN_OPERATOR){
+        if(currTok.TokenValue.operator == OP_RC){
+            parser->tokenPos++;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+_Bool CheckSC(Parser* parser){
+    fprintf(stderr, "Checking SemiColon part at: %d\n", parser->tokenPos);
+    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
+    if(currTok.type == TOKEN_OPERATOR){
+        if(currTok.TokenValue.operator == OP_SC){
+            parser->tokenPos++;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
 ASTNode* CheckOP(Arena* arena, Parser* parser){
+    fprintf(stderr, "Checking OP at: %d\n", parser->tokenPos);
     TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
     if(currTok.type == TOKEN_OPERATOR){
         OPERATOR_TYPE op = currTok.TokenValue.operator;
@@ -620,12 +705,13 @@ ASTNode* CheckOP(Arena* arena, Parser* parser){
             ASTNode* currNode;
             ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, ASTNode, currNode);
             if (err != ARENA_OK) {
-                printf("Couldn't build AST: BINARY PARENT NODE!\n");
+                fprintf(stderr, "Couldn't build AST: BINARY PARENT NODE: %s", ArenaErrorNames[err]);
+                printArenaInfo(arena);
                 abort();
             }
             ASTNodeType type = (ASTNodeType)parser->tok->tokens[parser->tokenPos].TokenValue.operator;
             currNode->nodeType = type;
-            //printf("OPERATOR TOKEN AT: %d\n", parser->tokenPos);
+            //fprintf(stderr, "OPERATOR TOKEN AT: %d\n", parser->tokenPos);
             parser->tokenPos++;
             return currNode;
         }
@@ -634,15 +720,17 @@ ASTNode* CheckOP(Arena* arena, Parser* parser){
 }
 
 ASTNode* CheckNum(Arena* arena, Parser* parser){
+    fprintf(stderr, "Checking NUM at: %d\n", parser->tokenPos);
     TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
     if(currTok.type == TOKEN_NUMBER){
         ASTNode* currNode;
         ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, ASTNode, currNode);
         if (err != ARENA_OK) {
-            printf("Couldn't build AST: LEAF NUM NODE!\n");
+            fprintf(stderr, "Couldn't build AST: LEAF NUM NODE: %s", ArenaErrorNames[err]);
+            printArenaInfo(arena);
             abort();
         }
-        //printf("NUMBER TOKEN AT: %d\n", parser->tokenPos);
+        //fprintf(stderr, "NUMBER TOKEN AT: %d\n", parser->tokenPos);
         currNode->Value.number = parser->tok->tokens[parser->tokenPos].TokenValue.numValue;
         currNode->nodeType = NODE_LEAF_NUM;
         parser->tokenPos++;
@@ -651,81 +739,39 @@ ASTNode* CheckNum(Arena* arena, Parser* parser){
     return NULL;
 }
 
-_Bool CheckLParen(Parser* parser){
-    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
-    if(currTok.type == TOKEN_OPERATOR){
-        if(currTok.TokenValue.operator == OP_LP){
-            parser->tokenPos++;
-            return TRUE;
-        }
-        printf("EXPECTED '(' at: %d", parser->tokenPos);
-        abort();
-    }
-    return FALSE;
-}
-
-_Bool CheckRParen(Parser* parser){
-    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
-    if(currTok.type == TOKEN_OPERATOR){
-        if(currTok.TokenValue.operator == OP_RP){
-            parser->tokenPos++;
-            return TRUE;
-        }
-        printf("EXPECTED ')' at: %d", parser->tokenPos);
-        abort();
-    }
-    return FALSE;
-}
-
-_Bool CheckLCB(Parser* parser){
-    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
-    if(currTok.type == TOKEN_OPERATOR){
-        if(currTok.TokenValue.operator == OP_LC){
-            parser->tokenPos++;
-            return TRUE;
-        }
-        printf("EXPECTED '{' at: %d", parser->tokenPos);
-        abort();
-    }
-    return FALSE;
-}
-
-_Bool CheckRCB(Parser* parser){
-    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
-    if(currTok.type == TOKEN_OPERATOR){
-        if(currTok.TokenValue.operator == OP_RC){
-            parser->tokenPos++;
-            return TRUE;
-        }
-        printf("EXPECTED '}' at: %d", parser->tokenPos);
-        abort();
-    }
-    return FALSE;
-}
-
-_Bool CheckSC(Parser* parser){
-    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
-    if(currTok.type == TOKEN_OPERATOR){
-        if(currTok.TokenValue.operator == OP_SC){
-            parser->tokenPos++;
-            return TRUE;
-        }
-        printf("EXPECTED ';' at: %d", parser->tokenPos);
-        abort();
-    }
-    return FALSE;
-}
-
 ASTNode* EnCheckNuExp(Arena* arena, Parser* parser);
 
 ASTNode* EnCheckExp(Arena* arena, Parser* parser);
 
+ASTNode* CheckFactor(Arena* arena, Parser* parser){
+    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
+    u16 prevTokPos = parser->tokenPos;
+    ASTNode* currNode;
+    if(CheckLParen(parser)){
+        currNode = EnCheckExp(arena, parser);
+        if(currNode == NULL){
+            fprintf(stderr, "EXPECTED EXP at: %d", parser->tokenPos);
+            abort();
+        }
+        if(CheckRParen(parser)){
+            return currNode;
+        } else {
+            fprintf(stderr, "EXPECTED ')' at: %d", parser->tokenPos);
+            abort();
+        }
+    }
+    fprintf(stderr, "Couldn't match factor.\n");
+    return NULL;
+}
+
 ASTNode* CheckElsePart(Arena* arena, Parser* parser){
+    fprintf(stderr, "Checking Else part at: %d\n", parser->tokenPos);
     TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
     ASTNode* currNode;
     ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, ASTNode, currNode);
     if (err != ARENA_OK) {
-        printf("Couldn't build AST: ELSE NODE!\n");
+        fprintf(stderr, "Couldn't build AST: ELSE NODE: %s", ArenaErrorNames[err]);
+        printArenaInfo(arena);
         abort();
     }
     if(currTok.type == TOKEN_KEYWORD){
@@ -733,10 +779,10 @@ ASTNode* CheckElsePart(Arena* arena, Parser* parser){
             currNode = EnCheckExp(arena, parser);
             if(CheckSC(parser))
                 return currNode;
-            printf("Expected expression at: %d", parser->tokenPos);
+            fprintf(stderr, "Expected expression at: %d", parser->tokenPos);
             abort();
         }
-        printf("Unexpected token at: %d", parser->tokenPos);
+        fprintf(stderr, "Unexpected token at: %d", parser->tokenPos);
         abort();
         currNode->nodeType = NODE_IF_ELSE;
         parser->tokenPos++;
@@ -746,14 +792,15 @@ ASTNode* CheckElsePart(Arena* arena, Parser* parser){
     return currNode; // Empty part.
 }
 
-
 ASTNode* CheckID(Arena* arena, Parser* parser){
     TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
+    fprintf(stderr, "Checking ID at: %d\n", parser->tokenPos);
     if(currTok.type == TOKEN_ID){
         ASTNode* currNode;
         ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, ASTNode, currNode);
         if (err != ARENA_OK) {
-            printf("Couldn't build AST: ID NODE!\n");
+            fprintf(stderr, "Couldn't build AST: ID NODE: %s", ArenaErrorNames[err]);
+            printArenaInfo(arena);
             abort();
         }
         currNode->nodeType = NODE_LEAF_ID;
@@ -765,12 +812,14 @@ ASTNode* CheckID(Arena* arena, Parser* parser){
 }
 
 ASTNode* CheckEqual(Arena* arena, Parser* parser){
+    fprintf(stderr, "Checking EqualExp at: %d\n", parser->tokenPos);
     TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
     if(currTok.type == TOKEN_OPERATOR){
         ASTNode* currNode;
         ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, ASTNode, currNode);
         if (err != ARENA_OK) {
-            printf("Couldn't build AST: ASSIGNMENT NODE!\n");
+            fprintf(stderr, "Couldn't build AST: ASSIGNMENT NODE: %s", ArenaErrorNames[err]);
+            printArenaInfo(arena);
             abort();
         }
         if(currTok.TokenValue.operator == OP_EQ){
@@ -779,11 +828,12 @@ ASTNode* CheckEqual(Arena* arena, Parser* parser){
             return currNode;
         }
     }
-    printf("EXPECTED '=' at: %d", parser->tokenPos);
+    fprintf(stderr, "EXPECTED '=' at: %d", parser->tokenPos);
     abort();
 }
 
 ASTNode* CheckAssignExp(Arena* arena, Parser* parser){
+    fprintf(stderr, "Checking AssignExp at: %d\n", parser->tokenPos);
     TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
     ASTNode* idNode = CheckID(arena, parser);
     if(idNode == NULL)
@@ -797,15 +847,18 @@ ASTNode* CheckAssignExp(Arena* arena, Parser* parser){
 
 ASTNode* CheckIfExp(Arena* arena, Parser* parser){
     TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
+    u16 prevPos = parser->tokenPos;
+    fprintf(stderr, "Checking IfExp at: %d\n", parser->tokenPos);
     if(currTok.type == TOKEN_KEYWORD){
         ASTNode* currNode;
         ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, ASTNode, currNode);
         if (err != ARENA_OK) {
-            printf("Couldn't build AST: KEYWORD NODE!\n");
+            fprintf(stderr, "Couldn't build AST: KEYWORD NODE: %s", ArenaErrorNames[err]);
+            printArenaInfo(arena);
             abort();
         }
         if (currTok.TokenValue.keyword != KW_IF) {
-            printf("EXPECTED IF AT: %d", parser->tokenPos);
+            fprintf(stderr, "EXPECTED IF AT: %d", parser->tokenPos);
             abort();
         }
         currNode->nodeType = NODE_IF_ELSE;
@@ -813,13 +866,13 @@ ASTNode* CheckIfExp(Arena* arena, Parser* parser){
         _Bool isThere;
         isThere = CheckLParen(parser);
         if(!isThere){
-            printf("EXPECTED '(' at: %d", parser->tokenPos);
+            fprintf(stderr, "EXPECTED '(' at: %d", parser->tokenPos);
             abort();
         }
         ASTNode* conditionNode = EnCheckExp(arena, parser);
         isThere = CheckRParen(parser);
         if(!isThere){
-            printf("EXPECTED ')' at: %d", parser->tokenPos);
+            fprintf(stderr, "EXPECTED ')' at: %d", parser->tokenPos);
             abort();
         }
         ASTNode* bodyNode = EnCheckExp(arena, parser);
@@ -829,11 +882,13 @@ ASTNode* CheckIfExp(Arena* arena, Parser* parser){
         currNode->Value.IfElseOperation.elseBodyNode = elsePart;
         return currNode;
     }
+    parser->tokenPos = prevPos;
     return NULL;
 }
 
 ASTNode* EnCheckNuExp(Arena* arena, Parser* parser){
     u16 prevTokPos = parser->tokenPos;
+    fprintf(stderr, "Checking NuExp at: %d\n", prevTokPos);
     ASTNode* binaryNode = CheckOP(arena, parser);
     if(binaryNode != NULL){
         ASTNode* expNode = EnCheckExp(arena, parser);
@@ -842,28 +897,21 @@ ASTNode* EnCheckNuExp(Arena* arena, Parser* parser){
             return binaryNode;
         }
     }
+    parser->tokenPos = prevTokPos;
     return NULL;
 }
 
 ASTNode* EnCheckExp(Arena* arena, Parser* parser){
     u16 prevPos = parser->tokenPos;
+    fprintf(stderr, "Checking Exp at: %d\n", prevPos);
     ASTNode* currNode;
-    if(CheckLParen(parser)){
-        currNode = EnCheckExp(arena, parser);
-        if(currNode == NULL){
-            printf("EXPECTED EXP at: %d", parser->tokenPos);
-            abort();
-        }
-        if(CheckRParen(parser)){
-            ASTNode* nuExpNode = EnCheckNuExp(arena, parser);
-            if(nuExpNode == NULL)
-                return currNode;
-            nuExpNode->Value.BinaryOperation.leftNode = currNode;
-            return nuExpNode;
-        } else {
-            printf("EXPECTED ')' at: %d", parser->tokenPos);
-            abort();
-        }
+    currNode = CheckFactor(arena, parser);
+    if(currNode != NULL){
+        ASTNode* nuExpNode = EnCheckNuExp(arena, parser);
+        if(nuExpNode == NULL)
+            return currNode;
+        nuExpNode->Value.BinaryOperation.leftNode = currNode;
+        return nuExpNode;
     }
     parser->tokenPos = prevPos;
     currNode = CheckNum(arena, parser);
@@ -877,39 +925,84 @@ ASTNode* EnCheckExp(Arena* arena, Parser* parser){
         }
         return nuExpNode;
     }
+    parser->tokenPos = prevPos;
     if(prevPos == 0){
         return NULL; // EMPTY PROGRAM.
     }
-    printf("EXPECTED EXP at: %d", prevPos);
+    fprintf(stderr, "EXPECTED EXP at: %d", prevPos);
     abort();
 }
 
-ASTNode* CheckStmnt(Arena* arena, Parser* parser){
+ASTNode* EnCheckStmnt(Arena* arena, Parser* parser);
+
+ASTNode* EnCheckNuStmnt(Arena* arena, Parser* parser, _Bool AfterStatement){
     u16 prevPos = parser->tokenPos;
     ASTNode* currNode;
-    currNode = CheckAssignExp(arena, parser);
-    if(currNode == NULL){
-        parser->tokenPos = prevPos;
-        currNode = CheckIfExp(arena, parser);
-    }
-    if(currNode == NULL){
-        return NULL;
-    }
-    if(CheckSC(parser))
+    if(CheckSC(parser)){
+        currNode = EnCheckStmnt(arena, parser);
         return currNode;
-    else{
-        printf("EXPECTED ';' at: %d", parser->tokenPos);
+    }
+    if (AfterStatement) {
+        fprintf(stderr, "EXPECTED ';' AT: %d", parser->tokenPos);
         abort();
     }
+    else {
+        return NULL;
+    }
+}
+
+ASTNode* EnCheckStmnt(Arena* arena, Parser* parser){
+    u16 prevPos = parser->tokenPos;
+    ASTNode* currNode;
+    ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, ASTNode, currNode);
+    if(err != ARENA_OK){
+        fprintf(stderr, "Can't make Stmnt Arena: %s", ArenaErrorNames[err]);
+        printArenaInfo(arena);
+        abort();
+    }
+    currNode->nodeType = NODE_STMNT;
+    ASTNode* currStmntNode;
+    _Bool statementParsed = TRUE;
+    currStmntNode = CheckAssignExp(arena, parser);
+    if(currStmntNode == NULL){
+        parser->tokenPos = prevPos;
+        currStmntNode = CheckIfExp(arena, parser);
+    }
+    if(currStmntNode == NULL){
+        statementParsed = FALSE;
+        POP_DATA_IN_ARENA(arena, ASTNode, 1);
+    }
+    ASTNode* nextStmntNode = EnCheckNuStmnt(arena, parser, statementParsed);
+    currNode->Value.StmtOperation.currentStmnt = currStmntNode;
+    currNode->Value.StmtOperation.nextStmnt = nextStmntNode;
+    return currNode;
+}
+
+ASTNode* CheckBlock(Arena* arena, Parser* parser){
+    fprintf(stderr, "Checking Block");
+    ASTNode* currNode;
+    if(CheckLCB(parser)){
+        currNode = EnCheckStmnt(arena, parser);
+        if (currNode == NULL) {
+            fprintf(stderr, "EXPECTED Statement at: %d", parser->tokenPos);
+            abort();
+        }
+        if(!CheckRCB(parser)){
+            fprintf(stderr, "EXPECTED '}' at: %d", parser->tokenPos);
+            abort();
+        }
+        return currNode;
+    }
+    return NULL;
 }
 
 void StartParsing(Arena* arena, Parser* parser){
     parser->startNode = EnCheckExp(arena, parser);
     if(parser->startNode == NULL)
-        parser->startNode = CheckStmnt(arena, parser);
+        parser->startNode = CheckBlock(arena, parser);
     if(parser->startNode != NULL){
-        printf("PARSED CORRECTLY\n");
-    } else printf("Empty program");
+        fprintf(stderr, "PARSED CORRECTLY\n");
+    } else fprintf(stderr, "Empty program");
 }
 
 void WalkAST(Parser* parser){
@@ -917,24 +1010,24 @@ void WalkAST(Parser* parser){
     ASTNode* previousNode = parser->startNode;
     while (currNode != NULL && currNode->nodeType != NODE_INVALID){
         if(currNode->nodeType == NODE_LEAF_NUM){
-            printf("The value of the node is: %"PRId64"\n", currNode->Value.number);
+            fprintf(stderr, "The value of the node is: %"PRId64"\n", currNode->Value.number);
             if (previousNode->nodeType == NODE_IF_ELSE){
             }
             if(currNode == previousNode->Value.BinaryOperation.rightNode){
-                printf("AST Walk Complete!\n");
+                fprintf(stderr, "AST Walk Complete!\n");
                 return;
             }
             currNode = previousNode->Value.BinaryOperation.rightNode;
         } else if(currNode->nodeType == NODE_LEAF_ID){
-            printf("The value of the node is: ");
+            fprintf(stderr, "The value of the node is: ");
             PrintSimpleString(&currNode->Value.ID);
-            printf("\n");
+            fprintf(stderr, "\n");
             currNode = previousNode->Value.BinaryOperation.rightNode;
         } else if(currNode->nodeType == NODE_IF_ELSE){
-            printf("Going inside an if-else-block");
+            fprintf(stderr, "Going inside an if-else-block");
         }
         else if (currNode->nodeType != NODE_INVALID && currNode->nodeType != NODE_NODES_NUM){
-            printf("The value of the node is: %s\n", OperatorNames[currNode->nodeType]);
+            fprintf(stderr, "The value of the node is: %s\n", OperatorNames[currNode->nodeType]);
             previousNode = currNode;
             currNode = currNode->Value.BinaryOperation.leftNode;
         }
@@ -947,11 +1040,11 @@ int main(){
     Arena LexerArena;
     ARENA_ERROR err = makeArena(&LexerArena, KiB(1));
     if(err != ARENA_OK){
-        printf("Can't make Lexer Arena");
+        fprintf(stderr, "Can't make Lexer Arena: %s", ArenaErrorNames[err]);
         return 0;
     }
     DFA* arithDFA = CreateDFA(&LexerArena);
-    const char* sampleProgram = "if ( 5 ) 7 ;";
+    const char* sampleProgram = "{ if (4) 4 ; }";
     Tokenizer* mainTokenizer = CreateTokenizer(&LexerArena, sampleProgram);
     Tokens* tokenizedProgram = StartTokenizing(&LexerArena, arithDFA, mainTokenizer);
     printTokens(tokenizedProgram);
@@ -959,7 +1052,7 @@ int main(){
     Arena ParserArena;
     err = makeArena(&ParserArena, KiB(5));
     if(err != ARENA_OK){
-        printf("Can't make Parser Arena");
+        fprintf(stderr, "Can't make Parser Arena: %s", ArenaErrorNames[err]);
         return 0;
     }
     Parser* mainParser = CreateParser(&ParserArena, tokenizedProgram);
