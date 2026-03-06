@@ -595,6 +595,8 @@ typedef enum {
     NODE_INVALID
 }ASTNodeType;
 
+static u16 numNodes = 0;
+
 typedef struct ASTNode ASTNode;
 struct ASTNode{
     union {
@@ -614,6 +616,7 @@ struct ASTNode{
         SimpleString ID;
         i64 number; // Or a value as a leaf node.
     }Value;
+    u16 nodeNum;
     ASTNodeType nodeType;
 };
 
@@ -1005,6 +1008,157 @@ void StartParsing(Arena* arena, Parser* parser){
     } else fprintf(stderr, "Empty program");
 }
 
+void AnalyseLeaf(Parser* parser, ASTNode* currNode){
+    if(currNode->nodeType == NODE_LEAF_ID){
+        printf("Leaf node is: ");
+        PrintSimpleString(&currNode->Value.ID);
+        printf("\n");
+    }
+    else if(currNode->nodeType == NODE_LEAF_NUM){
+        printf("Leaf node is: %"PRId64"\n", currNode->Value.number);
+    }
+}
+
+void AnalyseBinaryOp(Parser* parser, ASTNode* currNode){ // Useful when doing type checking.
+    //TYPE_DATA leftType = GetTypeOf(currNode->Value.BinaryOperation.leftNode);
+    //TYPE_DATA rightType = GetTypeOf(currNode->Value.BinaryOperation.rightNode);
+    //leftType==rightType
+    printf("Binary operation: %s", OperatorNames[currNode->nodeType]);
+    if(currNode->Value.BinaryOperation.leftNode == NULL || currNode->Value.BinaryOperation.leftNode->nodeType == NODE_EMPTY){
+        goto RightNodeTry;
+    }
+    {
+        ASTNodeType leftNodeType = currNode->Value.BinaryOperation.leftNode->nodeType;
+        if(leftNodeType == NODE_DIV || leftNodeType == NODE_MUL || leftNodeType == NODE_PLUS || leftNodeType == NODE_MINUS || leftNodeType == NODE_EQ){
+            AnalyseBinaryOp(parser, currNode->Value.BinaryOperation.leftNode);
+        }
+        if(leftNodeType == NODE_LEAF_NUM){
+            AnalyseLeaf(parser, currNode->Value.BinaryOperation.leftNode);
+        }
+    }
+RightNodeTry: {
+        if(currNode->Value.BinaryOperation.rightNode == NULL || currNode->Value.BinaryOperation.leftNode->nodeType == NODE_EMPTY){
+            return;
+        }
+        ASTNodeType rightNodeType = currNode->Value.BinaryOperation.rightNode->nodeType;
+        if(rightNodeType == NODE_DIV || rightNodeType == NODE_MUL || rightNodeType == NODE_PLUS || rightNodeType == NODE_MINUS || rightNodeType == NODE_EQ){
+            AnalyseBinaryOp(parser, currNode->Value.BinaryOperation.rightNode);
+        }
+        if(rightNodeType == NODE_LEAF_NUM){
+            AnalyseLeaf(parser, currNode->Value.BinaryOperation.rightNode);
+        }
+    }
+}
+
+void AnalyseStmt(Parser* parser, ASTNode* currNode);
+
+void AnalyseIfElse(Parser* parser, ASTNode* currNode){
+    printf("Analysing IF-ELSE.\n");
+    ASTNodeType conditionNodeType = currNode->Value.IfElseOperation.conditionNode->nodeType;
+    if(conditionNodeType == NODE_DIV || conditionNodeType == NODE_MUL || conditionNodeType == NODE_PLUS || conditionNodeType == NODE_MINUS || conditionNodeType == NODE_EQ){
+        AnalyseBinaryOp(parser, currNode->Value.StmtOperation.currentStmnt);
+    }
+    if(conditionNodeType == NODE_LEAF_NUM){
+        AnalyseLeaf(parser, currNode->Value.BinaryOperation.leftNode);
+    }
+    if(conditionNodeType == NODE_STMNT){
+        AnalyseStmt(parser, currNode->Value.StmtOperation.currentStmnt);
+    }
+    if(conditionNodeType == NODE_IF_ELSE){
+        AnalyseIfElse(parser, currNode);
+    }
+    ASTNodeType bodyNodeType = currNode->Value.IfElseOperation.bodyNode->nodeType;
+    if(bodyNodeType == NODE_DIV || bodyNodeType == NODE_MUL || bodyNodeType == NODE_PLUS || bodyNodeType == NODE_MINUS || bodyNodeType == NODE_EQ){
+        AnalyseBinaryOp(parser, currNode->Value.StmtOperation.currentStmnt);
+    }
+    if(bodyNodeType == NODE_LEAF_NUM){
+        AnalyseLeaf(parser, currNode->Value.BinaryOperation.leftNode);
+    }
+    if(bodyNodeType == NODE_STMNT){
+        AnalyseStmt(parser, currNode->Value.StmtOperation.currentStmnt);
+    }
+    if(bodyNodeType == NODE_IF_ELSE){
+        AnalyseIfElse(parser, currNode);
+    }
+    if(currNode->Value.IfElseOperation.elseBodyNode == NULL)
+        return;
+    ASTNodeType elseNodeType = currNode->Value.IfElseOperation.elseBodyNode->nodeType;
+    if(elseNodeType == NODE_DIV || elseNodeType == NODE_MUL || elseNodeType == NODE_PLUS || elseNodeType == NODE_MINUS || elseNodeType == NODE_EQ){
+        AnalyseBinaryOp(parser, currNode->Value.StmtOperation.currentStmnt);
+    }
+    if(elseNodeType == NODE_LEAF_NUM){
+        AnalyseLeaf(parser, currNode->Value.BinaryOperation.leftNode);
+    }
+    if(elseNodeType == NODE_STMNT){
+        AnalyseStmt(parser, currNode->Value.StmtOperation.currentStmnt);
+    }
+    if(elseNodeType == NODE_IF_ELSE){
+        AnalyseIfElse(parser, currNode);
+    }
+    if(elseNodeType == NODE_EMPTY)
+        return;
+}
+
+void AnalyseStmt(Parser* parser, ASTNode* currNode){
+    printf("Analyzing statement.\n");
+    if(currNode->Value.StmtOperation.currentStmnt == NULL || currNode->Value.StmtOperation.currentStmnt->nodeType == NODE_EMPTY){
+        goto SecondStatementTry;
+    }
+    {
+        printf("Analyzing first statement.\n");
+        ASTNodeType currentNodeType = currNode->Value.StmtOperation.currentStmnt->nodeType;
+        if(currentNodeType == NODE_DIV || currentNodeType == NODE_MUL || currentNodeType == NODE_PLUS || currentNodeType == NODE_MINUS || currentNodeType == NODE_EQ){
+            AnalyseBinaryOp(parser, currNode->Value.StmtOperation.currentStmnt);
+        }
+        if(currentNodeType == NODE_LEAF_NUM){
+            AnalyseLeaf(parser, currNode->Value.BinaryOperation.leftNode);
+        }
+        if(currentNodeType == NODE_STMNT){
+            AnalyseStmt(parser, currNode->Value.StmtOperation.currentStmnt);
+        }
+    }
+SecondStatementTry: {
+        printf("Analyzing second statement.\n");
+        if(currNode->Value.StmtOperation.nextStmnt == NULL || currNode->Value.StmtOperation.nextStmnt->nodeType == NODE_EMPTY){
+            return;
+        }
+        ASTNodeType nextNodeType = currNode->Value.StmtOperation.nextStmnt->nodeType;
+        if(nextNodeType == NODE_DIV || nextNodeType == NODE_MUL || nextNodeType == NODE_PLUS || nextNodeType == NODE_MINUS || nextNodeType == NODE_EQ){
+            AnalyseBinaryOp(parser, currNode->Value.StmtOperation.nextStmnt);
+        }
+        if(nextNodeType == NODE_LEAF_NUM){
+            AnalyseLeaf(parser, currNode->Value.BinaryOperation.leftNode);
+        }
+        if(nextNodeType == NODE_STMNT){
+            AnalyseStmt(parser, currNode->Value.StmtOperation.nextStmnt);
+        }
+    }
+}
+
+void AnalyseAST(Parser* parser){
+    ASTNode* daughterNode = parser->startNode;
+    if(parser->startNode == NULL){
+        printf("EMPTY PROGRAM\n");
+        return;
+    }
+    ASTNodeType daughterNodeType = parser->startNode->nodeType;
+    switch (daughterNodeType) {
+        case NODE_DIV:
+        case NODE_EQ:
+        case NODE_MINUS:
+        case NODE_PLUS:
+        case NODE_MUL:
+            AnalyseBinaryOp(parser, daughterNode);
+            break;
+        case NODE_IF_ELSE:
+            AnalyseIfElse(parser, daughterNode);
+            break;
+        case NODE_STMNT:
+            AnalyseStmt(parser, daughterNode);
+            break;
+    }
+}
+
 void WalkAST(Parser* parser){
     ASTNode* currNode = parser->startNode;
     ASTNode* previousNode = parser->startNode;
@@ -1034,7 +1188,8 @@ void WalkAST(Parser* parser){
     }
 }
 
-//NOTE : Language is incomplete as there is no concept of blocks.
+//TODO : Semantic Analysis. Make a symbol table for that and a simple stack-based system to track symbol - values. Check each node and see if it makes sense. If a variable is declared before it's used. If it exists in a scope. Also update the grammar.
+//TODO : Type system? Infer type of expression-result without doing anything about it.
 //TODO : Hardest thing now: Optimization and Generation of Assembly.
 int main(){
     Arena LexerArena;
@@ -1044,7 +1199,7 @@ int main(){
         return 0;
     }
     DFA* arithDFA = CreateDFA(&LexerArena);
-    const char* sampleProgram = "{ if (4) 4 ; }";
+    const char* sampleProgram = "{ if (4) 4; }";
     Tokenizer* mainTokenizer = CreateTokenizer(&LexerArena, sampleProgram);
     Tokens* tokenizedProgram = StartTokenizing(&LexerArena, arithDFA, mainTokenizer);
     printTokens(tokenizedProgram);
@@ -1059,6 +1214,7 @@ int main(){
     StartParsing(&ParserArena, mainParser);
     removeArena(&LexerArena);
     //WalkAST(mainParser); // Prefix notation.
+    AnalyseAST(mainParser);
     removeArena(&ParserArena);
     return 0;
 }
