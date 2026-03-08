@@ -1,3 +1,4 @@
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <inttypes.h>
@@ -237,6 +238,7 @@ typedef enum{
     TOKEN_OPERATOR,
     TOKEN_KEYWORD,
     TOKEN_ID,
+    TOKEN_PRIM_TYPE,
     TOKEN_NONE,
 }TOKEN_TYPE;
 
@@ -251,19 +253,28 @@ typedef enum{
     OP_RP,
     OP_EQ,
     OP_SC,
+    OP_LT,
+    OP_GT,
+    OP_C,
 }OPERATOR_TYPE;
 
 typedef enum{
     KW_IF,
     KW_ELSE,
-    KWS_NUM, // Number of keywords
+    KWS_NUM // Number of keywords
 }KEYWORD_TYPE;
+
+typedef enum{
+    PT_INT,
+    PTS_NUM
+}PRIMITIVE_TYPE;
 
 char* TokenNames[] = {
     "TOKEN_NUMBER",
     "TOKEN_OPERATOR",
     "TOKEN_KEYWORD",
     "TOKEN_ID",
+    "TOKEN_PRIM_TYPE",
     "TOKEN_NONE"
 };
 
@@ -277,12 +288,20 @@ char* OperatorNames[] = {
     "OP_LP",
     "OP_RP",
     "OP_EQ",
-    "OP_SC"
+    "OP_SC",
+    "OP_LT",
+    "OP_GT",
+    "OP_C",
 };
 
 char* KeyWordNames[] = {
     "if",
-    "else"
+    "else",
+    "int",
+};
+
+char* PrimitiveTypeNames[] = {
+    "int",
 };
 
 typedef struct{
@@ -292,6 +311,7 @@ typedef struct{
         i64 numValue;
         OPERATOR_TYPE operator;
         KEYWORD_TYPE keyword;
+        PRIMITIVE_TYPE primType;
     } TokenValue;
 }TokenInfo;
 
@@ -367,18 +387,29 @@ TokenInfo TokenizeString(DFA* dfa, Tokenizer* tokenizer){
     SimpleString sourceString;
     sourceString.start = &tokenizer->inputStream[(int)startPos];
     sourceString.length = lengthString;
-    i16 matchedString = -1;
+    i16 KeywordMatchString = -1;
+    i16 PrimitiveMatchString = -1;
     for (u16 i = 0; i < KWS_NUM; i++){
         _Bool match = MatchStringDirect(&sourceString, KeyWordNames[i]);
         if(match)
-            matchedString = i;
+            KeywordMatchString = i;
     }
-    if (matchedString != -1){ // It's a keyword.
+    if (KeywordMatchString != -1){ // It's a keyword.
         tok.type = TOKEN_KEYWORD;
-        tok.TokenValue.keyword = matchedString;
+        tok.TokenValue.keyword = KeywordMatchString;
     } else {
-        tok.type = TOKEN_ID;
-        tok.TokenValue.stringValue = sourceString;
+        for(u16 i = 0; i < PTS_NUM; i++){
+            _Bool match = MatchStringDirect(&sourceString, PrimitiveTypeNames[i]);
+            if(match)
+                PrimitiveMatchString = i;
+        }
+        if (PrimitiveMatchString != -1){ // It's a primitive Keyword.
+            tok.type = TOKEN_PRIM_TYPE;
+            tok.TokenValue.primType = PrimitiveMatchString;
+        } else {
+            tok.type = TOKEN_ID;
+            tok.TokenValue.stringValue = sourceString;
+        }
     }
     int lookupIndex = dfa->currState * DFAInputNum + Character;
     dfa->currState = dfa->state[lookupIndex];
@@ -425,6 +456,10 @@ TokenInfo TokenizeOp(DFA* dfa, Tokenizer* tokenizer){
         }
         case ';': {
             tok.TokenValue.operator = OP_SC;
+            break;
+        }
+        case ':':{
+            tok.TokenValue.operator = OP_C;
             break;
         }
         default: {
@@ -536,43 +571,25 @@ void printTokens(Tokens* tokens){
 
 /*
 
-    Simple Grammar:
-    S     -> Exp
-    Exp   -> Number NuExp
-    NuExp -> Op Exp | empty
-    Op    -> + | - | * | /
-
     We will make a recursive descent parser for this.
 
-    First-try for Enhanced-ish Grammar:
-    S         -> Exp
-    Exp       -> ( Exp ) NuExp | { Exp } NuExp | AssignExp NuExp | Number NuExp | IfExp NuExp | ID NuExp   <- Only if the ID is already present. But we will think about it later.
-    NuExp     -> Op Exp | empty
-    Op        -> + | - | * | /
-    IfExp     -> If ( EXP ) EXP elsepart
-    elsepart  -> else EXP | empty
-    AssignExp -> ID = EXP
+    Complete Simple Grammar:
 
-    More Enhanced Grammar: <- Will add blocks for {} later.
-    S         -> Exp | Stmnt
-    Stmnt     -> AssignExp ; | IfExp ;
-    Exp       -> ( Exp ) NuExp | Number NuExp
-    AssignExp -> ID = Exp
-    NuExp     -> Op Exp | empty
-    IfExp     -> If ( Exp ) Exp elsepart
-    elsepart  -> else Exp | empty
-
-    More More Enhanced Grammar:
-    S         -> Exp | Block
-    Block     -> { Stmnt }
-    Stmnt     -> AssignExp NuStmnt | IfExp NuStmnt | empty NuStmnt
-    NuStmnt   -> ; Stmnt | empty   <- It will only look for another statement if there's already a semicolon.
-    Exp       -> Factor NuExp | Number NuExp
-    Factor    -> ( Exp )
-    AssignExp -> ID = Exp
-    NuExp     -> Op Exp | empty
-    IfExp     -> If ( Exp ) Exp elsepart
-    elsepart  -> else Exp | empty
+    S          -> Block | empty
+    Block      -> { Stmnt } NuBlock
+    NuBlock    -> Block | empty
+    Stmnt      -> AssignExp NuStmnt | IfExp NuStmnt | empty NuStmnt
+    NuStmnt    -> ; Stmnt | empty <- It will only look for another statement if there's already a semicolon.
+    Exp        -> Factor NuExp | Number NuExp
+    Factor     -> ( Exp )
+    AssignExp  -> ID : Type = Exp
+    NuExp      -> BinaryOp Exp | empty
+    IfExp      -> 'if' ( CompareExp ) Block Elsepart
+    CompareExp -> ID Compare Exp
+    Elsepart   -> 'else' Block | empty
+    Type       -> 'int'
+    BinaryOp   -> + | - | * | /
+    CompareOp  -> < | >
 
 */
 
@@ -592,8 +609,32 @@ typedef enum {
     NODE_EMPTY,
     NODE_NODES_NUM,
     NODE_STMNT,
+    NODE_COMPARE_EXP,
+    NODE_BLOCK,
     NODE_INVALID
 }ASTNodeType;
+
+
+const char* ASTNodeNames[] = {
+    "NODE_PLUS",
+    "NODE_MINUS",
+    "NODE_MUL",
+    "NODE_DIV",
+    "NODE_LC",
+    "NODE_RC",
+    "NODE_LP",
+    "NODE_RP",
+    "NODE_EQ",
+    "NODE_IF_ELSE",
+    "NODE_LEAF_NUM",
+    "NODE_LEAF_ID",
+    "NODE_EMPTY",
+    "NODE_NODES_NUM",
+    "NODE_STMNT",
+    "NODE_COMPARE_EXP",
+    "NODE_BLOCK",
+    "NODE_INVALID"
+};
 
 static u16 numNodes = 0;
 
@@ -612,11 +653,22 @@ struct ASTNode{
         struct {
             ASTNode* currentStmnt;
             ASTNode* nextStmnt;
-        }StmtOperation;
-        SimpleString ID;
+        }StmtList;
+        struct {
+            ASTNode* currentBlock;
+            ASTNode* nextBlock;
+        }BlockList;
+        struct {
+            ASTNode* IDNode;
+            ASTNode* CompareNode;
+        }CompareExp;
+        struct{
+            SimpleString Name;
+            Primitive
+        }ID;
         i64 number; // Or a value as a leaf node.
     }Value;
-    u16 nodeNum;
+    //u16 nodeNum;
     ASTNodeType nodeType;
 };
 
@@ -699,8 +751,8 @@ _Bool CheckSC(Parser* parser){
     return FALSE;
 }
 
-ASTNode* CheckOP(Arena* arena, Parser* parser){
-    fprintf(stderr, "Checking OP at: %d\n", parser->tokenPos);
+ASTNode* CheckBinaryOp(Arena* arena, Parser* parser){
+    fprintf(stderr, "Checking binary OP at: %d\n", parser->tokenPos);
     TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
     if(currTok.type == TOKEN_OPERATOR){
         OPERATOR_TYPE op = currTok.TokenValue.operator;
@@ -810,6 +862,30 @@ ASTNode* CheckID(Arena* arena, Parser* parser){
         currNode->Value.ID = currTok.TokenValue.stringValue;
         parser->tokenPos++;
         return currNode;
+    }
+    return NULL;
+}
+
+ASTNode* CheckCompareExp(Arena* arena, Parser* parser){
+    fprintf(stderr, "Checking comparison exp at: %d\n", parser->tokenPos);
+    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
+
+    if(currTok.type == TOKEN_OPERATOR){
+        OPERATOR_TYPE op = currTok.TokenValue.operator;
+        if(op == OP_DIV || op == OP_MINUS || op == OP_MUL || op == OP_PLUS){
+            ASTNode* currNode;
+            ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, ASTNode, currNode);
+            if (err != ARENA_OK) {
+                fprintf(stderr, "Couldn't build AST: BINARY PARENT NODE: %s", ArenaErrorNames[err]);
+                printArenaInfo(arena);
+                abort();
+            }
+            ASTNodeType type = (ASTNodeType)parser->tok->tokens[parser->tokenPos].TokenValue.operator;
+            currNode->nodeType = type;
+            //fprintf(stderr, "OPERATOR TOKEN AT: %d\n", parser->tokenPos);
+            parser->tokenPos++;
+            return currNode;
+        }
     }
     return NULL;
 }
@@ -1010,12 +1086,12 @@ void StartParsing(Arena* arena, Parser* parser){
 
 void AnalyseLeaf(Parser* parser, ASTNode* currNode){
     if(currNode->nodeType == NODE_LEAF_ID){
-        printf("Leaf node is: ");
+        fprintf(stderr, "Leaf node is: ");
         PrintSimpleString(&currNode->Value.ID);
-        printf("\n");
+        fprintf(stderr, "\n");
     }
     else if(currNode->nodeType == NODE_LEAF_NUM){
-        printf("Leaf node is: %"PRId64"\n", currNode->Value.number);
+        fprintf(stderr, "Leaf node is: %"PRId64"\n", currNode->Value.number);
     }
 }
 
@@ -1023,12 +1099,13 @@ void AnalyseBinaryOp(Parser* parser, ASTNode* currNode){ // Useful when doing ty
     //TYPE_DATA leftType = GetTypeOf(currNode->Value.BinaryOperation.leftNode);
     //TYPE_DATA rightType = GetTypeOf(currNode->Value.BinaryOperation.rightNode);
     //leftType==rightType
-    printf("Binary operation: %s", OperatorNames[currNode->nodeType]);
+    fprintf(stderr, "Binary operation: %s", OperatorNames[currNode->nodeType]);
     if(currNode->Value.BinaryOperation.leftNode == NULL || currNode->Value.BinaryOperation.leftNode->nodeType == NODE_EMPTY){
         goto RightNodeTry;
     }
     {
         ASTNodeType leftNodeType = currNode->Value.BinaryOperation.leftNode->nodeType;
+        //fprintf(stderr, "Left node is: %s", ASTNodeNames[leftNodeType]);
         if(leftNodeType == NODE_DIV || leftNodeType == NODE_MUL || leftNodeType == NODE_PLUS || leftNodeType == NODE_MINUS || leftNodeType == NODE_EQ){
             AnalyseBinaryOp(parser, currNode->Value.BinaryOperation.leftNode);
         }
@@ -1041,6 +1118,7 @@ RightNodeTry: {
             return;
         }
         ASTNodeType rightNodeType = currNode->Value.BinaryOperation.rightNode->nodeType;
+        //fprintf(stderr, "Right node is: %s", ASTNodeNames[rightNodeType]);
         if(rightNodeType == NODE_DIV || rightNodeType == NODE_MUL || rightNodeType == NODE_PLUS || rightNodeType == NODE_MINUS || rightNodeType == NODE_EQ){
             AnalyseBinaryOp(parser, currNode->Value.BinaryOperation.rightNode);
         }
@@ -1053,8 +1131,9 @@ RightNodeTry: {
 void AnalyseStmt(Parser* parser, ASTNode* currNode);
 
 void AnalyseIfElse(Parser* parser, ASTNode* currNode){
-    printf("Analysing IF-ELSE.\n");
+    fprintf(stderr, "Analysing IF-ELSE.\n");
     ASTNodeType conditionNodeType = currNode->Value.IfElseOperation.conditionNode->nodeType;
+    //fprintf(stderr, "Condition node is: %s", ASTNodeNames[conditionNodeType]);
     if(conditionNodeType == NODE_DIV || conditionNodeType == NODE_MUL || conditionNodeType == NODE_PLUS || conditionNodeType == NODE_MINUS || conditionNodeType == NODE_EQ){
         AnalyseBinaryOp(parser, currNode->Value.StmtOperation.currentStmnt);
     }
@@ -1068,6 +1147,7 @@ void AnalyseIfElse(Parser* parser, ASTNode* currNode){
         AnalyseIfElse(parser, currNode);
     }
     ASTNodeType bodyNodeType = currNode->Value.IfElseOperation.bodyNode->nodeType;
+    //fprintf(stderr, "Body node is: %s", ASTNodeNames[bodyNodeType]);
     if(bodyNodeType == NODE_DIV || bodyNodeType == NODE_MUL || bodyNodeType == NODE_PLUS || bodyNodeType == NODE_MINUS || bodyNodeType == NODE_EQ){
         AnalyseBinaryOp(parser, currNode->Value.StmtOperation.currentStmnt);
     }
@@ -1082,7 +1162,9 @@ void AnalyseIfElse(Parser* parser, ASTNode* currNode){
     }
     if(currNode->Value.IfElseOperation.elseBodyNode == NULL)
         return;
+    fprintf(stderr, "Analyzing the else body.\n");
     ASTNodeType elseNodeType = currNode->Value.IfElseOperation.elseBodyNode->nodeType;
+    //fprintf(stderr, "Else node is: %s", ASTNodeNames[elseNodeType]);
     if(elseNodeType == NODE_DIV || elseNodeType == NODE_MUL || elseNodeType == NODE_PLUS || elseNodeType == NODE_MINUS || elseNodeType == NODE_EQ){
         AnalyseBinaryOp(parser, currNode->Value.StmtOperation.currentStmnt);
     }
@@ -1100,13 +1182,14 @@ void AnalyseIfElse(Parser* parser, ASTNode* currNode){
 }
 
 void AnalyseStmt(Parser* parser, ASTNode* currNode){
-    printf("Analyzing statement.\n");
+    fprintf(stderr, "Analyzing statement.\n");
     if(currNode->Value.StmtOperation.currentStmnt == NULL || currNode->Value.StmtOperation.currentStmnt->nodeType == NODE_EMPTY){
         goto SecondStatementTry;
     }
     {
-        printf("Analyzing first statement.\n");
+        fprintf(stderr, "Analyzing first statement.\n");
         ASTNodeType currentNodeType = currNode->Value.StmtOperation.currentStmnt->nodeType;
+        //fprintf(stderr, "First statemnt node is: %s", ASTNodeNames[currentNodeType]);
         if(currentNodeType == NODE_DIV || currentNodeType == NODE_MUL || currentNodeType == NODE_PLUS || currentNodeType == NODE_MINUS || currentNodeType == NODE_EQ){
             AnalyseBinaryOp(parser, currNode->Value.StmtOperation.currentStmnt);
         }
@@ -1116,13 +1199,17 @@ void AnalyseStmt(Parser* parser, ASTNode* currNode){
         if(currentNodeType == NODE_STMNT){
             AnalyseStmt(parser, currNode->Value.StmtOperation.currentStmnt);
         }
+        if(currentNodeType == NODE_IF_ELSE){
+            AnalyseIfElse(parser, currNode->Value.StmtOperation.currentStmnt);
+        }
     }
 SecondStatementTry: {
-        printf("Analyzing second statement.\n");
+        fprintf(stderr, "Analyzing second statement.\n");
         if(currNode->Value.StmtOperation.nextStmnt == NULL || currNode->Value.StmtOperation.nextStmnt->nodeType == NODE_EMPTY){
             return;
         }
         ASTNodeType nextNodeType = currNode->Value.StmtOperation.nextStmnt->nodeType;
+        //fprintf(stderr, "Second statemnt node is: %s", ASTNodeNames[nextNodeType]);
         if(nextNodeType == NODE_DIV || nextNodeType == NODE_MUL || nextNodeType == NODE_PLUS || nextNodeType == NODE_MINUS || nextNodeType == NODE_EQ){
             AnalyseBinaryOp(parser, currNode->Value.StmtOperation.nextStmnt);
         }
@@ -1132,13 +1219,82 @@ SecondStatementTry: {
         if(nextNodeType == NODE_STMNT){
             AnalyseStmt(parser, currNode->Value.StmtOperation.nextStmnt);
         }
+        if(nextNodeType == NODE_IF_ELSE){
+            AnalyseIfElse(parser, currNode->Value.StmtOperation.currentStmnt);
+        }
     }
+}
+
+#define MAX_SYMBOL_STACK_SIZE 255
+
+// Remember when making this, when exiting a scope, all the symbols should be destroyed.
+
+typedef struct{
+    SimpleString* name[MAX_SYMBOL_STACK_SIZE];
+
+}Symbol;
+
+typedef struct{ // Symbol stack is only for semantic analysis, so we would need to know the type of it, but we won't do any maths.
+    ASTNode* data[MAX_SYMBOL_STACK_SIZE];
+    i16      topStackPointer;
+}SymbolStack;
+
+typedef enum{
+    STACK_OVERFLOW,
+    STACK_UNDERFLOW,
+    STACK_SYMBOL_NOT_FOUND,
+    STACK_SYMBOL_FOUND,
+    STACK_OK,
+}STACK_ERR;
+
+SymbolStack* MakeSymbolStack(Arena* arena){
+    SymbolStack* temp;
+    PUSH_EMPTY_ARRAY_IN_ARENA(arena, SymbolStack, 1, temp);
+    temp->topStackPointer = 0;
+    return temp;
+}
+
+STACK_ERR PushSymbolToStack(SymbolStack* stack, ASTNode* node){
+    if((stack->topStackPointer + 1) >= MAX_SYMBOL_STACK_SIZE){
+        return STACK_OVERFLOW;
+    }
+    stack->data[stack->topStackPointer] = node;
+    stack->topStackPointer++;
+    return STACK_OK;
+}
+
+STACK_ERR PopSymbolToStack(SymbolStack* stack){
+    if(stack->topStackPointer < 0){
+        return STACK_UNDERFLOW;
+    }
+    stack->topStackPointer--;
+    return STACK_OK;
+}
+
+STACK_ERR FindSymbolInStack(SymbolStack* stack, SimpleString* ID){ // Starting trying to find the symbol from the top, so newer scope will have it in.
+    _Bool found = FALSE;
+    u16   currentNode = stack->topStackPointer;
+    while(found != TRUE && currentNode <= 0){
+        found = MatchStringIndirect(&stack->data[currentNode]->Value.ID, ID);
+    }
+    if(!found)
+        return STACK_SYMBOL_NOT_FOUND;
+    return STACK_SYMBOL_FOUND;
+}
+
+STACK_ERR SetTopPointer(SymbolStack* stack, u16 newTop){ // This will be used when going out of scope.
+    if(newTop >= MAX_SYMBOL_STACK_SIZE)
+        return STACK_OVERFLOW;
+    if(newTop < 0)
+        return STACK_UNDERFLOW;
+    stack->topStackPointer = newTop;
+    return STACK_OK;
 }
 
 void AnalyseAST(Parser* parser){
     ASTNode* daughterNode = parser->startNode;
     if(parser->startNode == NULL){
-        printf("EMPTY PROGRAM\n");
+        fprintf(stderr, "EMPTY PROGRAM\n");
         return;
     }
     ASTNodeType daughterNodeType = parser->startNode->nodeType;
