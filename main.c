@@ -610,7 +610,7 @@ typedef enum { // Since I have lined up OP enum with AST for easy assignment, an
     NODE_MINUS,
     NODE_MUL,
     NODE_DIV,
-    NODE_EQ = 8,
+    NODE_ASSIGNMENT = 8,
     NODE_LT = 10,
     NODE_GT,
     NODE_IF_ELSE = 13,
@@ -634,7 +634,7 @@ const char* ASTNodeNames[] = {
     "NODE_ERROR",
     "NODE_ERROR",
     "NODE_ERROR",
-    "NODE_EQ",
+    "NODE_ASSIGNMENT",
     "NODE_ERROR",
     "NODE_LT",
     "NODE_GT",
@@ -659,6 +659,10 @@ struct ASTNode{
             ASTNode* leftNode;
             ASTNode* rightNode;
         }BinaryOperation;
+        struct{
+            ASTNode* IDNode;
+            ASTNode* RValueNode;
+        }AssignmentOperation; // It's still binary, but I need better way to go through the AST.
         struct {
             ASTNode* conditionNode;
             ASTNode* bodyNode;
@@ -953,7 +957,7 @@ ASTNode* CheckEqual(Arena* arena, Parser* parser){
             abort();
         }
         if(currTok.TokenValue.operator == OP_EQ){
-            currNode->nodeType = NODE_EQ;
+            currNode->nodeType = NODE_ASSIGNMENT;
             parser->tokenPos++;
             return currNode;
         }
@@ -985,8 +989,8 @@ ASTNode* NCheckAssignExp(Arena* arena, Parser* parser){
         idNode->Value.ID.type = type;
         ASTNode* equalNode = CheckEqual(arena, parser);
         ASTNode* valNode = ECheckExp(arena, parser);
-        equalNode->Value.BinaryOperation.leftNode = idNode;
-        equalNode->Value.BinaryOperation.rightNode = valNode;
+        equalNode->Value.AssignmentOperation.IDNode = idNode;
+        equalNode->Value.AssignmentOperation.RValueNode = valNode;
         return equalNode;
     }
     fprintf(stderr, "Expected ':' at: %d", parser->tokenPos);
@@ -1195,13 +1199,13 @@ void StartParsing(Arena* arena, Parser* parser){
 
 #define MAX_SYMBOL_STACK_SIZE 255 // Remember when making this, when exiting a scope, all the symbols should be destroyed.
 typedef struct{
-    SimpleString*  name[MAX_SYMBOL_STACK_SIZE];
+    SimpleString*  name;
     PRIMITIVE_TYPE type;
 }Symbol;
 
 typedef struct{ // Symbol stack is only for semantic analysis, so we would need to know the type of it, but we won't do any maths.
-    ASTNode* data[MAX_SYMBOL_STACK_SIZE];
-    i16      topStackPointer;
+    Symbol data[MAX_SYMBOL_STACK_SIZE];
+    i16    topStackPointer;
 }SymbolStack;
 
 typedef enum{
@@ -1212,23 +1216,36 @@ typedef enum{
     STACK_OK,
 }STACK_ERR;
 
-SymbolStack* MakeSymbolStack(Arena* arena){
+const char* StackErrorNames[] = {
+    "STACK_OVERFLOW",
+    "STACK_UNDERFLOW",
+    "STACK_SYMBOL_NOT_FOUND",
+    "STACK_SYMBOL_FOUND",
+    "STACK_OK",
+};
+
+SymbolStack* CreateSymbolStack(Arena* arena){
     SymbolStack* temp;
     PUSH_EMPTY_ARRAY_IN_ARENA(arena, SymbolStack, 1, temp);
     temp->topStackPointer = 0;
     return temp;
 }
 
-STACK_ERR PushSymbolToStack(SymbolStack* stack, ASTNode* node){
+
+i16 GetStackTop(SymbolStack* stack){
+    return stack->topStackPointer;
+}
+
+STACK_ERR PushSymbolToStack(SymbolStack* stack, Symbol symbol){
     if((stack->topStackPointer + 1) >= MAX_SYMBOL_STACK_SIZE){
         return STACK_OVERFLOW;
     }
-    stack->data[stack->topStackPointer] = node;
+    stack->data[stack->topStackPointer] = symbol;
     stack->topStackPointer++;
     return STACK_OK;
 }
 
-STACK_ERR PopSymbolToStack(SymbolStack* stack){
+STACK_ERR PopSymbolFromStack(SymbolStack* stack){
     if(stack->topStackPointer < 0){
         return STACK_UNDERFLOW;
     }
@@ -1236,14 +1253,16 @@ STACK_ERR PopSymbolToStack(SymbolStack* stack){
     return STACK_OK;
 }
 
-STACK_ERR FindSymbolInStack(SymbolStack* stack, SimpleString* ID){ // Starting trying to find the symbol from the top, so newer scope will have it in.
+STACK_ERR FindSymbolInStack(SymbolStack* stack, SimpleString* ID, i16* stackPos){ // Starting trying to find the symbol from the top, so newer scope will have it in.
     _Bool found = FALSE;
-    u16   currentNode = stack->topStackPointer;
-    while(found != TRUE && currentNode <= 0){
-        found = MatchStringIndirect(&stack->data[currentNode]->Value.ID.Name, ID);
+    u16   currentSymbol = stack->topStackPointer;
+    while(found != TRUE && currentSymbol <= 0){
+        found = MatchStringIndirect(stack->data[currentSymbol].name, ID);
+        currentSymbol--;
     }
     if(!found)
         return STACK_SYMBOL_NOT_FOUND;
+    *stackPos = currentSymbol;
     return STACK_SYMBOL_FOUND;
 }
 
@@ -1257,10 +1276,323 @@ STACK_ERR SetTopPointer(SymbolStack* stack, u16 newTop){ // This will be used wh
 }
 
 
-// Check Type
+// Check Type (Not useful right now as we only have one type).
 // Check Symbol existence.
+// Remember the stack state everytime we go inside a new block. // Also remember in which scope the analysis is taking place, such that redefinition doesn't cause errors.
+// Anything less than the scope pointer is from a scope that is without-it. It can still access that variable, but it can also replace it.
 
+_Bool AnalyzeBinaryOp(SymbolStack* stack, i16 currentScopePointer, ASTNode* node);
 
+_Bool AnalyzeCompOp(SymbolStack* stack, i16 currentScopePointer, ASTNode* node);
+
+_Bool AnalyzeIfElse(SymbolStack* stack, i16 currentScopePointer, ASTNode* node);
+
+_Bool AnalyzeStmnt(SymbolStack* stack, i16 currentScopePointer, ASTNode* node);
+
+_Bool AnalyzeBlock(SymbolStack* stack, i16 currentScopePointer, ASTNode* node);
+
+void AnalyzeID(SymbolStack* stack, i16 currentScopePointer, ASTNode* node, _Bool toPush){
+    fprintf(stderr, "Analyzing ID.\n");
+    Symbol ID;
+    ID.name = &node->Value.ID.Name;
+    ID.type = node->Value.ID.type;
+    i16 symbolPos = -1;
+    STACK_ERR err = FindSymbolInStack(stack, &node->Value.ID.Name, &symbolPos);
+    if(toPush){
+        if (err == STACK_SYMBOL_FOUND || err == STACK_SYMBOL_NOT_FOUND ) {
+            if(currentScopePointer < symbolPos) { // The symbol was found within the scope.
+                fprintf(stderr, "Redefinition of symbol: ");
+                PrintSimpleString(ID.name);
+                fprintf(stderr, "\n");
+                abort();
+            }
+                err = PushSymbolToStack(stack, ID);
+                if(err == STACK_OVERFLOW){
+                    fprintf(stderr, "Stack overflow.\n");
+                    abort();
+                } else
+                    return;
+        } else {
+            fprintf(stderr, "Unkown error: %s", StackErrorNames[err]);
+            abort();
+        }
+    } else {
+        if(err == STACK_SYMBOL_NOT_FOUND){
+            fprintf(stderr, "Undefined symbol: ");
+            PrintSimpleString(ID.name);
+            fprintf(stderr, "\n");
+            abort();
+        }
+        if(err == STACK_SYMBOL_FOUND){
+            return;
+        } else {
+            fprintf(stderr, "Unkown error: %s", StackErrorNames[err]);
+            abort();
+        }
+    }
+}
+
+_Bool AnalyzeAssignment(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
+    fprintf(stderr, "Analyzing Assignment.\n");
+    ASTNode* IDNode = node->Value.AssignmentOperation.IDNode;
+    AnalyzeID(stack, currentScopePointer, IDNode, TRUE);
+    ASTNodeType RValueNodeType = node->Value.AssignmentOperation.RValueNode->nodeType;
+    switch (RValueNodeType) {
+        case NODE_INVALID  :
+        case NODE_LEAF_NUM :
+        case NODE_EMPTY    : {
+            return TRUE;
+        }
+        case NODE_DIV   :
+        case NODE_PLUS  :
+        case NODE_MINUS :
+        case NODE_MUL   : {
+            return AnalyzeBinaryOp(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode);
+        }
+        case NODE_LEAF_ID : {
+            AnalyzeID(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode, FALSE);
+            break;
+        }
+    }
+    return TRUE;
+}
+
+_Bool AnalyzeBinaryOp(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
+    fprintf(stderr, "Analyzing BinaryOp.\n");
+    ASTNodeType LeftNodeType = node->Value.BinaryOperation.leftNode->nodeType;
+    _Bool LeftSuccess = TRUE;
+    switch (LeftNodeType) {
+        case NODE_INVALID  :
+        case NODE_LEAF_NUM :
+        case NODE_EMPTY    : {
+            return TRUE;
+        }
+        case NODE_DIV   :
+        case NODE_PLUS  :
+        case NODE_MINUS :
+        case NODE_MUL   : {
+            LeftSuccess = AnalyzeBinaryOp(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode);
+            break;
+        }
+        case NODE_LEAF_ID : {
+            AnalyzeID(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode, FALSE);
+            break;
+        }
+    }
+    ASTNodeType RightNodeType = node->Value.BinaryOperation.rightNode->nodeType;
+    _Bool RightSuccess = TRUE;
+    switch (RightNodeType) {
+        case NODE_INVALID  :
+        case NODE_LEAF_NUM :
+        case NODE_EMPTY    : {
+            return TRUE;
+        }
+        case NODE_DIV   :
+        case NODE_PLUS  :
+        case NODE_MINUS :
+        case NODE_MUL   : {
+            RightSuccess = AnalyzeBinaryOp(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode);
+            break;
+        }
+        case NODE_LEAF_ID : {
+            AnalyzeID(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode, FALSE);
+            break;
+        }
+    }
+    return (LeftSuccess && RightSuccess);
+}
+
+_Bool AnalyzeCompOp(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
+    fprintf(stderr, "Analyzing CompOp.\n");
+    ASTNode* IDNode = node->Value.CompareExp.IDNode;
+    AnalyzeID(stack, currentScopePointer, IDNode, FALSE);
+    ASTNodeType CompWithType = node->Value.CompareExp.ExpNode->nodeType;
+    switch (CompWithType) {
+        case NODE_INVALID  :
+        case NODE_LEAF_NUM :
+        case NODE_EMPTY    : {
+            return TRUE;
+        }
+        case NODE_DIV   :
+        case NODE_PLUS  :
+        case NODE_MINUS :
+        case NODE_MUL   : {
+            return AnalyzeBinaryOp(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode);
+        }
+        case NODE_LEAF_ID : {
+            AnalyzeID(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode, FALSE);
+            break;
+        }
+    }
+    return TRUE;
+}
+
+_Bool AnalyzeIfElse(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
+    fprintf(stderr, "Analyzing IfElse.\n");
+    i16 newScopePointer = GetStackTop(stack);
+    _Bool Condition = AnalyzeCompOp(stack, currentScopePointer, node->Value.IfElseOperation.conditionNode);
+    _Bool BodyBlock = AnalyzeBlock(stack, newScopePointer, node->Value.IfElseOperation.bodyNode);
+    SetTopPointer(stack, newScopePointer);
+    newScopePointer = currentScopePointer; // Ditching all the symbols in that scope.
+    ASTNodeType elseBodyType = node->Value.IfElseOperation.elseBodyNode->nodeType;
+    if(elseBodyType == NODE_EMPTY){
+        return Condition && BodyBlock;
+    } else {
+        newScopePointer = GetStackTop(stack);
+        _Bool ElseBlock = AnalyzeBlock(stack, newScopePointer, node->Value.IfElseOperation.elseBodyNode);
+        SetTopPointer(stack, newScopePointer);
+        newScopePointer = currentScopePointer; // Ditching all the symbols in that scope.
+        return Condition && BodyBlock && ElseBlock;
+    }
+}
+
+_Bool AnalyzeStmnt(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
+    fprintf(stderr, "Analyzing Statement.\n");
+    ASTNodeType CurrentStmntType = node->Value.StmtList.currentStmntNode->nodeType;
+    ASTNode* CurrentStmntNode = node->Value.StmtList.currentStmntNode;
+    _Bool CurrentStatementAnalysis;
+    switch (CurrentStmntType) {
+        case NODE_INVALID  :
+        case NODE_LEAF_NUM :
+        case NODE_EMPTY    : {
+            CurrentStatementAnalysis = TRUE;
+        }
+        case NODE_DIV   :
+        case NODE_PLUS  :
+        case NODE_MINUS :
+        case NODE_MUL   : {
+            CurrentStatementAnalysis = AnalyzeBinaryOp(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode);
+            break;
+        }
+        case NODE_LEAF_ID : {
+            AnalyzeID(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode, FALSE);
+            break;
+        }
+        case NODE_ASSIGNMENT: {
+            CurrentStatementAnalysis = AnalyzeAssignment(stack, currentScopePointer, CurrentStmntNode);
+            break;
+        }
+        case NODE_IF_ELSE: {
+            CurrentStatementAnalysis = AnalyzeIfElse(stack, currentScopePointer, CurrentStmntNode);
+            break;
+        }
+    }
+    ASTNodeType NextStmntType = node->Value.StmtList.nextStmntNode->nodeType;
+    ASTNode* NextStmntNode = node->Value.StmtList.nextStmntNode;
+    _Bool NextStatementAnalysis;
+    switch (NextStmntType) {
+        case NODE_INVALID  :
+        case NODE_LEAF_NUM :
+        case NODE_EMPTY    : {
+            NextStatementAnalysis = TRUE;
+        }
+        case NODE_DIV   :
+        case NODE_PLUS  :
+        case NODE_MINUS :
+        case NODE_MUL   : {
+            NextStatementAnalysis = AnalyzeBinaryOp(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode);
+            break;
+        }
+        case NODE_LEAF_ID : {
+            AnalyzeID(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode, FALSE);
+            break;
+        }
+        case NODE_ASSIGNMENT: {
+            NextStatementAnalysis = AnalyzeAssignment(stack, currentScopePointer, NextStmntNode);
+            break;
+        }
+        case NODE_IF_ELSE: {
+            NextStatementAnalysis = AnalyzeIfElse(stack, currentScopePointer, NextStmntNode);
+            break;
+        }
+    }
+    return CurrentStatementAnalysis && NextStatementAnalysis;
+}
+
+_Bool AnalyzeBlock(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
+    fprintf(stderr, "Analyzing Block.\n");
+    ASTNodeType CurrentBlockType = node->Value.BlockList.startOfCurrentBlockNode->nodeType;
+    ASTNode* CurrentBlockNode = node->Value.BlockList.startOfCurrentBlockNode;
+    _Bool CurrentBlockAnalysis;
+    switch (CurrentBlockType) {
+        case NODE_INVALID  :
+        case NODE_LEAF_NUM :
+        case NODE_EMPTY    : {
+            CurrentBlockAnalysis = TRUE;
+        }
+        case NODE_DIV   :
+        case NODE_PLUS  :
+        case NODE_MINUS :
+        case NODE_MUL   : {
+            CurrentBlockAnalysis = AnalyzeBinaryOp(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode);
+            break;
+        }
+        case NODE_LEAF_ID : {
+            AnalyzeID(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode, FALSE);
+            break;
+        }
+        case NODE_ASSIGNMENT: {
+            CurrentBlockAnalysis = AnalyzeAssignment(stack, currentScopePointer, CurrentBlockNode);
+            break;
+        }
+        case NODE_IF_ELSE: {
+            CurrentBlockAnalysis = AnalyzeIfElse(stack, currentScopePointer, CurrentBlockNode);
+            break;
+        }
+        case NODE_STMNT: {
+            CurrentBlockAnalysis = AnalyzeStmnt(stack, currentScopePointer, CurrentBlockNode);
+        }
+    }
+    i16 newScopePointer = GetStackTop(stack);
+    ASTNodeType NextBlockType = node->Value.BlockList.startOfNextBlockNode->nodeType;
+    ASTNode* NextBlockNode = node->Value.BlockList.startOfNextBlockNode;
+    _Bool NextBlockAnalysis;
+    switch (NextBlockType) {
+        case NODE_INVALID  :
+        case NODE_LEAF_NUM :
+        case NODE_EMPTY    : {
+            NextBlockAnalysis = TRUE;
+        }
+        case NODE_DIV   :
+        case NODE_PLUS  :
+        case NODE_MINUS :
+        case NODE_MUL   : {
+            NextBlockAnalysis = AnalyzeBinaryOp(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode);
+            break;
+        }
+        case NODE_LEAF_ID : {
+            AnalyzeID(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode, FALSE);
+            break;
+        }
+        case NODE_ASSIGNMENT: {
+            NextBlockAnalysis = AnalyzeAssignment(stack, currentScopePointer, NextBlockNode);
+            break;
+        }
+        case NODE_IF_ELSE: {
+            NextBlockAnalysis = AnalyzeIfElse(stack, currentScopePointer, NextBlockNode);
+            break;
+        }
+        case NODE_STMNT: {
+            NextBlockAnalysis = AnalyzeStmnt(stack, currentScopePointer, CurrentBlockNode);
+            break;
+        }
+        case NODE_BLOCK: {
+            NextBlockAnalysis = AnalyzeBlock(stack, currentScopePointer, CurrentBlockNode);
+            break;
+        }
+    }
+    return CurrentBlockAnalysis && NextBlockAnalysis;
+}
+
+_Bool StartSemanticAnalysis(SymbolStack* stack, ASTNode* node){
+    fprintf(stderr, "Started analysis.\n");
+    if(node == NULL){
+        fprintf(stderr, "Empty program.\n");
+        return FALSE;
+    }
+    i16 currentScopePointer = GetStackTop(stack);
+    return AnalyzeBlock(stack, currentScopePointer, node);
+}
 
 char* ReadInputFile(Arena* arena, const char* fileName){
     FILE* fp = fopen(fileName, "rb");
@@ -1350,8 +1682,10 @@ int main(int numArgs, char* args[]){
     Tokenizer* mainTokenizer = CreateTokenizer(&LexerArena, sampleProgram);
     Tokens* tokenizedProgram = StartTokenizing(&LexerArena, arithDFA, mainTokenizer);
     printTokens(tokenizedProgram);
-    // Making 2 different arenas becauses the info from the Lexer's tokenized table will be copied and transformed in the parser.
+    // Making an arena for the parser becuase the info from the Lexer's tokenized table will be copied and transformed in the parser.
     Arena ParserArena;
+    // We cannot remove this arena right now because the ID nodes reference it.
+    //removeArena(&inputFileArena);
     err = makeArena(&ParserArena, KiB(5));
     if(err != ARENA_OK){
         fprintf(stderr, "Can't make Parser Arena: %s", ArenaErrorNames[err]);
@@ -1359,6 +1693,11 @@ int main(int numArgs, char* args[]){
     }
     Parser* mainParser = CreateParser(&ParserArena, tokenizedProgram);
     StartParsing(&ParserArena, mainParser);
+    SymbolStack* mainStack = CreateSymbolStack(&ParserArena);
+    _Bool Analysis = StartSemanticAnalysis(mainStack, mainParser->startNode);
+    //if(Analysis){
+        //fprintf(stderr, "Analysis true!");
+    //}
     removeArena(&LexerArena);
     removeArena(&ParserArena);
     return 0;

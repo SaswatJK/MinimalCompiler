@@ -1,6 +1,6 @@
 {
     x : int = 5;
-    if (x < 3) {
+    if (abcde < 3) {
         y : int = 5;
         z : int = y + 3;
     };
