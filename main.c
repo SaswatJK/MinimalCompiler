@@ -592,7 +592,7 @@ void printTokens(Tokens* tokens){
     NuBlock    -> Block | empty
     Stmnt      -> AssignExp NuStmnt | IfExp NuStmnt | empty NuStmnt
     NuStmnt    -> ; Stmnt | empty <- It will only look for another statement if there's already a semicolon.
-    Exp        -> Factor NuExp | Number NuExp
+    Exp        -> Factor NuExp | Number NuExp | ID NuExp
     Factor     -> ( Exp )
     AssignExp  -> ID : Type = Exp
     NuExp      -> BinaryOp Exp | empty
@@ -1074,6 +1074,18 @@ ASTNode* ECheckExp(Arena* arena, Parser* parser){
         return nuExpNode;
     }
     parser->tokenPos = prevPos;
+    currNode = NCheckID(arena, parser);
+    if(currNode != NULL){
+        ASTNode* nuExpNode = NCheckNuExp(arena, parser);
+        if(nuExpNode != NULL){
+            nuExpNode->Value.BinaryOperation.leftNode = currNode;
+        }
+        else {
+            return currNode;
+        }
+        return nuExpNode;
+    }
+    parser->tokenPos = prevPos;
     if(prevPos == 0){
         ASTNode* retNode;
         ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, ASTNode, retNode);
@@ -1243,6 +1255,12 @@ STACK_ERR SetTopPointer(SymbolStack* stack, u16 newTop){ // This will be used wh
     stack->topStackPointer = newTop;
     return STACK_OK;
 }
+
+
+// Check Type
+// Check Symbol existence.
+
+
 
 char* ReadInputFile(Arena* arena, const char* fileName){
     FILE* fp = fopen(fileName, "rb");
