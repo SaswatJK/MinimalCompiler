@@ -1255,8 +1255,8 @@ STACK_ERR PopSymbolFromStack(SymbolStack* stack){
 
 STACK_ERR FindSymbolInStack(SymbolStack* stack, SimpleString* ID, i16* stackPos){ // Starting trying to find the symbol from the top, so newer scope will have it in.
     _Bool found = FALSE;
-    u16   currentSymbol = stack->topStackPointer;
-    while(found != TRUE && currentSymbol <= 0){
+    i16   currentSymbol = stack->topStackPointer - 1;
+    while(found != TRUE && currentSymbol >= 0){
         found = MatchStringIndirect(stack->data[currentSymbol].name, ID);
         currentSymbol--;
     }
@@ -1292,11 +1292,13 @@ _Bool AnalyzeStmnt(SymbolStack* stack, i16 currentScopePointer, ASTNode* node);
 _Bool AnalyzeBlock(SymbolStack* stack, i16 currentScopePointer, ASTNode* node);
 
 void AnalyzeID(SymbolStack* stack, i16 currentScopePointer, ASTNode* node, _Bool toPush){
-    fprintf(stderr, "Analyzing ID.\n");
+    fprintf(stderr, "Analyzing ID:\n");
     Symbol ID;
     ID.name = &node->Value.ID.Name;
     ID.type = node->Value.ID.type;
     i16 symbolPos = -1;
+    PrintSimpleString(ID.name);
+    fprintf(stderr, "\n");
     STACK_ERR err = FindSymbolInStack(stack, &node->Value.ID.Name, &symbolPos);
     if(toPush){
         if (err == STACK_SYMBOL_FOUND || err == STACK_SYMBOL_NOT_FOUND ) {
@@ -1307,6 +1309,7 @@ void AnalyzeID(SymbolStack* stack, i16 currentScopePointer, ASTNode* node, _Bool
                 abort();
             }
                 err = PushSymbolToStack(stack, ID);
+                fprintf(stderr, "^ Pushing ID.\n");
                 if(err == STACK_OVERFLOW){
                     fprintf(stderr, "Stack overflow.\n");
                     abort();
@@ -1337,6 +1340,7 @@ _Bool AnalyzeAssignment(SymbolStack* stack, i16 currentScopePointer, ASTNode* no
     ASTNode* IDNode = node->Value.AssignmentOperation.IDNode;
     AnalyzeID(stack, currentScopePointer, IDNode, TRUE);
     ASTNodeType RValueNodeType = node->Value.AssignmentOperation.RValueNode->nodeType;
+    fprintf(stderr, "The RValue node is: %s\n", ASTNodeNames[RValueNodeType]);
     switch (RValueNodeType) {
         case NODE_INVALID  :
         case NODE_LEAF_NUM :
@@ -1371,11 +1375,11 @@ _Bool AnalyzeBinaryOp(SymbolStack* stack, i16 currentScopePointer, ASTNode* node
         case NODE_PLUS  :
         case NODE_MINUS :
         case NODE_MUL   : {
-            LeftSuccess = AnalyzeBinaryOp(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode);
+            LeftSuccess = AnalyzeBinaryOp(stack, currentScopePointer, node->Value.BinaryOperation.leftNode);
             break;
         }
         case NODE_LEAF_ID : {
-            AnalyzeID(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode, FALSE);
+            AnalyzeID(stack, currentScopePointer, node->Value.BinaryOperation.leftNode, FALSE);
             break;
         }
     }
@@ -1391,11 +1395,11 @@ _Bool AnalyzeBinaryOp(SymbolStack* stack, i16 currentScopePointer, ASTNode* node
         case NODE_PLUS  :
         case NODE_MINUS :
         case NODE_MUL   : {
-            RightSuccess = AnalyzeBinaryOp(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode);
+            RightSuccess = AnalyzeBinaryOp(stack, currentScopePointer, node->Value.BinaryOperation.rightNode);
             break;
         }
         case NODE_LEAF_ID : {
-            AnalyzeID(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode, FALSE);
+            AnalyzeID(stack, currentScopePointer, node->Value.BinaryOperation.rightNode, FALSE);
             break;
         }
     }
@@ -1406,6 +1410,7 @@ _Bool AnalyzeCompOp(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
     fprintf(stderr, "Analyzing CompOp.\n");
     ASTNode* IDNode = node->Value.CompareExp.IDNode;
     AnalyzeID(stack, currentScopePointer, IDNode, FALSE);
+    fprintf(stderr, "Analyzed ID.\n");
     ASTNodeType CompWithType = node->Value.CompareExp.ExpNode->nodeType;
     switch (CompWithType) {
         case NODE_INVALID  :
@@ -1456,6 +1461,7 @@ _Bool AnalyzeStmnt(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
         case NODE_LEAF_NUM :
         case NODE_EMPTY    : {
             CurrentStatementAnalysis = TRUE;
+            break;
         }
         case NODE_DIV   :
         case NODE_PLUS  :
@@ -1479,12 +1485,14 @@ _Bool AnalyzeStmnt(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
     }
     ASTNodeType NextStmntType = node->Value.StmtList.nextStmntNode->nodeType;
     ASTNode* NextStmntNode = node->Value.StmtList.nextStmntNode;
+    fprintf(stderr, "The next statement node is: %s\n", ASTNodeNames[NextStmntType]);
     _Bool NextStatementAnalysis;
     switch (NextStmntType) {
         case NODE_INVALID  :
         case NODE_LEAF_NUM :
         case NODE_EMPTY    : {
             NextStatementAnalysis = TRUE;
+            break;
         }
         case NODE_DIV   :
         case NODE_PLUS  :
@@ -1505,6 +1513,13 @@ _Bool AnalyzeStmnt(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
             NextStatementAnalysis = AnalyzeIfElse(stack, currentScopePointer, NextStmntNode);
             break;
         }
+        case NODE_STMNT: {
+            NextStatementAnalysis = AnalyzeStmnt(stack, currentScopePointer, NextStmntNode);
+            break;
+        }
+        default: {
+            NextStatementAnalysis = TRUE;
+        }
     }
     return CurrentStatementAnalysis && NextStatementAnalysis;
 }
@@ -1512,6 +1527,7 @@ _Bool AnalyzeStmnt(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
 _Bool AnalyzeBlock(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
     fprintf(stderr, "Analyzing Block.\n");
     ASTNodeType CurrentBlockType = node->Value.BlockList.startOfCurrentBlockNode->nodeType;
+    fprintf(stderr, "The current block node is: %s\n", ASTNodeNames[CurrentBlockType]);
     ASTNode* CurrentBlockNode = node->Value.BlockList.startOfCurrentBlockNode;
     _Bool CurrentBlockAnalysis;
     switch (CurrentBlockType) {
@@ -1519,6 +1535,7 @@ _Bool AnalyzeBlock(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
         case NODE_LEAF_NUM :
         case NODE_EMPTY    : {
             CurrentBlockAnalysis = TRUE;
+            break;
         }
         case NODE_DIV   :
         case NODE_PLUS  :
@@ -1541,6 +1558,10 @@ _Bool AnalyzeBlock(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
         }
         case NODE_STMNT: {
             CurrentBlockAnalysis = AnalyzeStmnt(stack, currentScopePointer, CurrentBlockNode);
+            break;
+        }
+        default: {
+            break;
         }
     }
     i16 newScopePointer = GetStackTop(stack);
@@ -1552,6 +1573,7 @@ _Bool AnalyzeBlock(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
         case NODE_LEAF_NUM :
         case NODE_EMPTY    : {
             NextBlockAnalysis = TRUE;
+            break;
         }
         case NODE_DIV   :
         case NODE_PLUS  :
@@ -1579,6 +1601,9 @@ _Bool AnalyzeBlock(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
         case NODE_BLOCK: {
             NextBlockAnalysis = AnalyzeBlock(stack, currentScopePointer, CurrentBlockNode);
             break;
+        }
+        default: {
+            return TRUE;
         }
     }
     return CurrentBlockAnalysis && NextBlockAnalysis;
@@ -1695,9 +1720,9 @@ int main(int numArgs, char* args[]){
     StartParsing(&ParserArena, mainParser);
     SymbolStack* mainStack = CreateSymbolStack(&ParserArena);
     _Bool Analysis = StartSemanticAnalysis(mainStack, mainParser->startNode);
-    //if(Analysis){
-        //fprintf(stderr, "Analysis true!");
-    //}
+    if(Analysis){
+        fprintf(stderr, "Analysis true!");
+    }
     removeArena(&LexerArena);
     removeArena(&ParserArena);
     return 0;
