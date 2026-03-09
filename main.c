@@ -470,6 +470,10 @@ TokenInfo TokenizeOp(DFA* dfa, Tokenizer* tokenizer){
             tok.TokenValue.operator = OP_GT;
             break;
         }
+        case '=':{
+            tok.TokenValue.operator = OP_EQ;
+            break;
+        }
         default: {
             FoundOperator = FALSE;
             break;
@@ -601,29 +605,23 @@ void printTokens(Tokens* tokens){
 
 */
 
-typedef enum {
+typedef enum { // Since I have lined up OP enum with AST for easy assignment, and since I don't want to have nodes that aren't nodes be in here.
     NODE_PLUS,
     NODE_MINUS,
     NODE_MUL,
     NODE_DIV,
-    NODE_LC,
-    NODE_RC,
-    NODE_LP,
-    NODE_RP,
-    NODE_EQ,
-    NODE_SC,
-    NODE_LT,
+    NODE_EQ = 8,
+    NODE_LT = 10,
     NODE_GT,
-    NODE_C,
-    NODE_IF_ELSE,
+    NODE_IF_ELSE = 13,
     NODE_LEAF_NUM,
     NODE_LEAF_ID,
     NODE_EMPTY,
-    NODE_NODES_NUM,
     NODE_STMNT,
     NODE_COMPARE_EXP,
     NODE_BLOCK,
-    NODE_INVALID
+    NODE_INVALID,
+    NODE_NODES_NUM,
 }ASTNodeType;
 
 
@@ -632,24 +630,24 @@ const char* ASTNodeNames[] = {
     "NODE_MINUS",
     "NODE_MUL",
     "NODE_DIV",
-    "NODE_LC",
-    "NODE_RC",
-    "NODE_LP",
-    "NODE_RP",
+    "NODE_ERROR",
+    "NODE_ERROR",
+    "NODE_ERROR",
+    "NODE_ERROR",
     "NODE_EQ",
-    "NODE_SC",
+    "NODE_ERROR",
     "NODE_LT",
     "NODE_GT",
-    "NODE_C",
+    "NODE_ERROR",
     "NODE_IF_ELSE",
     "NODE_LEAF_NUM",
     "NODE_LEAF_ID",
     "NODE_EMPTY",
-    "NODE_NODES_NUM",
     "NODE_STMNT",
     "NODE_COMPARE_EXP",
     "NODE_BLOCK",
-    "NODE_INVALID"
+    "NODE_INVALID",
+    "NODE_NODES_NUM",
 };
 
 static u16 numNodes = 0;
@@ -968,6 +966,7 @@ PRIMITIVE_TYPE CheckType(Parser* parser){
     fprintf(stderr, "Checking type at: %d\n", parser->tokenPos);
     TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
     if(currTok.type == TOKEN_PRIM_TYPE){
+        parser->tokenPos++;
         return currTok.TokenValue.primType;
     } else {
         fprintf(stderr, "Expected type at: %d", parser->tokenPos);
@@ -1182,152 +1181,7 @@ void StartParsing(Arena* arena, Parser* parser){
     } else fprintf(stderr, "Empty program");
 }
 
-void AnalyseLeaf(Parser* parser, ASTNode* currNode){
-    if(currNode->nodeType == NODE_LEAF_ID){
-        fprintf(stderr, "Leaf node is: ");
-        PrintSimpleString(&currNode->Value.ID.Name);
-        fprintf(stderr, " with the type: %s", PrimitiveTypeNames[currNode->Value.ID.type]);
-        fprintf(stderr, "\n");
-    }
-    else if(currNode->nodeType == NODE_LEAF_NUM){
-        fprintf(stderr, "Leaf node is: %"PRId64"\n", currNode->Value.number);
-    }
-}
-
-void AnalyseBinaryOp(Parser* parser, ASTNode* currNode){ // Useful when doing type checking.
-    //TYPE_DATA leftType = GetTypeOf(currNode->Value.BinaryOperation.leftNode);
-    //TYPE_DATA rightType = GetTypeOf(currNode->Value.BinaryOperation.rightNode);
-    //leftType==rightType
-    fprintf(stderr, "Binary operation: %s", OperatorNames[currNode->nodeType]);
-    if(currNode->Value.BinaryOperation.leftNode == NULL || currNode->Value.BinaryOperation.leftNode->nodeType == NODE_EMPTY){
-        goto RightNodeTry;
-    }
-    {
-        ASTNodeType leftNodeType = currNode->Value.BinaryOperation.leftNode->nodeType;
-        //fprintf(stderr, "Left node is: %s", ASTNodeNames[leftNodeType]);
-        if(leftNodeType == NODE_DIV || leftNodeType == NODE_MUL || leftNodeType == NODE_PLUS || leftNodeType == NODE_MINUS || leftNodeType == NODE_EQ){
-            AnalyseBinaryOp(parser, currNode->Value.BinaryOperation.leftNode);
-        }
-        if(leftNodeType == NODE_LEAF_NUM){
-            AnalyseLeaf(parser, currNode->Value.BinaryOperation.leftNode);
-        }
-    }
-RightNodeTry: {
-        if(currNode->Value.BinaryOperation.rightNode == NULL || currNode->Value.BinaryOperation.leftNode->nodeType == NODE_EMPTY){
-            return;
-        }
-        ASTNodeType rightNodeType = currNode->Value.BinaryOperation.rightNode->nodeType;
-        //fprintf(stderr, "Right node is: %s", ASTNodeNames[rightNodeType]);
-        if(rightNodeType == NODE_DIV || rightNodeType == NODE_MUL || rightNodeType == NODE_PLUS || rightNodeType == NODE_MINUS || rightNodeType == NODE_EQ){
-            AnalyseBinaryOp(parser, currNode->Value.BinaryOperation.rightNode);
-        }
-        if(rightNodeType == NODE_LEAF_NUM){
-            AnalyseLeaf(parser, currNode->Value.BinaryOperation.rightNode);
-        }
-    }
-}
-
-void AnalyseStmt(Parser* parser, ASTNode* currNode);
-
-void AnalyseIfElse(Parser* parser, ASTNode* currNode){
-    fprintf(stderr, "Analysing IF-ELSE.\n");
-    ASTNodeType conditionNodeType = currNode->Value.IfElseOperation.conditionNode->nodeType;
-    //fprintf(stderr, "Condition node is: %s", ASTNodeNames[conditionNodeType]);
-    if(conditionNodeType == NODE_DIV || conditionNodeType == NODE_MUL || conditionNodeType == NODE_PLUS || conditionNodeType == NODE_MINUS || conditionNodeType == NODE_EQ){
-        AnalyseBinaryOp(parser, currNode->Value.StmtList.currentStmntNode);
-    }
-    if(conditionNodeType == NODE_LEAF_NUM){
-        AnalyseLeaf(parser, currNode->Value.BinaryOperation.leftNode);
-    }
-    if(conditionNodeType == NODE_STMNT){
-        AnalyseStmt(parser, currNode->Value.StmtList.currentStmntNode);
-    }
-    if(conditionNodeType == NODE_IF_ELSE){
-        AnalyseIfElse(parser, currNode);
-    }
-    ASTNodeType bodyNodeType = currNode->Value.IfElseOperation.bodyNode->nodeType;
-    //fprintf(stderr, "Body node is: %s", ASTNodeNames[bodyNodeType]);
-    if(bodyNodeType == NODE_DIV || bodyNodeType == NODE_MUL || bodyNodeType == NODE_PLUS || bodyNodeType == NODE_MINUS || bodyNodeType == NODE_EQ){
-        AnalyseBinaryOp(parser, currNode->Value.StmtList.currentStmntNode);
-    }
-    if(bodyNodeType == NODE_LEAF_NUM){
-        AnalyseLeaf(parser, currNode->Value.BinaryOperation.leftNode);
-    }
-    if(bodyNodeType == NODE_STMNT){
-        AnalyseStmt(parser, currNode->Value.StmtList.currentStmntNode);
-    }
-    if(bodyNodeType == NODE_IF_ELSE){
-        AnalyseIfElse(parser, currNode);
-    }
-    if(currNode->Value.IfElseOperation.elseBodyNode == NULL)
-        return;
-    fprintf(stderr, "Analyzing the else body.\n");
-    ASTNodeType elseNodeType = currNode->Value.IfElseOperation.elseBodyNode->nodeType;
-    //fprintf(stderr, "Else node is: %s", ASTNodeNames[elseNodeType]);
-    if(elseNodeType == NODE_DIV || elseNodeType == NODE_MUL || elseNodeType == NODE_PLUS || elseNodeType == NODE_MINUS || elseNodeType == NODE_EQ){
-        AnalyseBinaryOp(parser, currNode->Value.StmtList.currentStmntNode);
-    }
-    if(elseNodeType == NODE_LEAF_NUM){
-        AnalyseLeaf(parser, currNode->Value.BinaryOperation.leftNode);
-    }
-    if(elseNodeType == NODE_STMNT){
-        AnalyseStmt(parser, currNode->Value.StmtList.currentStmntNode);
-    }
-    if(elseNodeType == NODE_IF_ELSE){
-        AnalyseIfElse(parser, currNode);
-    }
-    if(elseNodeType == NODE_EMPTY)
-        return;
-}
-
-void AnalyseStmt(Parser* parser, ASTNode* currNode){
-    fprintf(stderr, "Analyzing statement.\n");
-    if(currNode->Value.StmtList.currentStmntNode == NULL || currNode->Value.StmtList.currentStmntNode->nodeType == NODE_EMPTY){
-        goto SecondStatementTry;
-    }
-    {
-        fprintf(stderr, "Analyzing first statement.\n");
-        ASTNodeType currentNodeType = currNode->Value.StmtList.currentStmntNode->nodeType;
-        //fprintf(stderr, "First statemnt node is: %s", ASTNodeNames[currentNodeType]);
-        if(currentNodeType == NODE_DIV || currentNodeType == NODE_MUL || currentNodeType == NODE_PLUS || currentNodeType == NODE_MINUS || currentNodeType == NODE_EQ){
-            AnalyseBinaryOp(parser, currNode->Value.StmtList.currentStmntNode);
-        }
-        if(currentNodeType == NODE_LEAF_NUM){
-            AnalyseLeaf(parser, currNode->Value.BinaryOperation.leftNode);
-        }
-        if(currentNodeType == NODE_STMNT){
-            AnalyseStmt(parser, currNode->Value.StmtList.currentStmntNode);
-        }
-        if(currentNodeType == NODE_IF_ELSE){
-            AnalyseIfElse(parser, currNode->Value.StmtList.currentStmntNode);
-        }
-    }
-SecondStatementTry: {
-        fprintf(stderr, "Analyzing second statement.\n");
-        if(currNode->Value.StmtList.nextStmntNode == NULL || currNode->Value.StmtList.nextStmntNode->nodeType == NODE_EMPTY){
-            return;
-        }
-        ASTNodeType nextNodeType = currNode->Value.StmtList.nextStmntNode->nodeType;
-        //fprintf(stderr, "Second statemnt node is: %s", ASTNodeNames[nextNodeType]);
-        if(nextNodeType == NODE_DIV || nextNodeType == NODE_MUL || nextNodeType == NODE_PLUS || nextNodeType == NODE_MINUS || nextNodeType == NODE_EQ){
-            AnalyseBinaryOp(parser, currNode->Value.StmtList.nextStmntNode);
-        }
-        if(nextNodeType == NODE_LEAF_NUM){
-            AnalyseLeaf(parser, currNode->Value.BinaryOperation.leftNode);
-        }
-        if(nextNodeType == NODE_STMNT){
-            AnalyseStmt(parser, currNode->Value.StmtList.nextStmntNode);
-        }
-        if(nextNodeType == NODE_IF_ELSE){
-            AnalyseIfElse(parser, currNode->Value.StmtList.currentStmntNode);
-        }
-    }
-}
-
-#define MAX_SYMBOL_STACK_SIZE 255
-
-// Remember when making this, when exiting a scope, all the symbols should be destroyed.
-
+#define MAX_SYMBOL_STACK_SIZE 255 // Remember when making this, when exiting a scope, all the symbols should be destroyed.
 typedef struct{
     SimpleString*  name[MAX_SYMBOL_STACK_SIZE];
     PRIMITIVE_TYPE type;
@@ -1390,34 +1244,84 @@ STACK_ERR SetTopPointer(SymbolStack* stack, u16 newTop){ // This will be used wh
     return STACK_OK;
 }
 
-void AnalyseAST(Parser* parser){
-    ASTNode* daughterNode = parser->startNode;
-    if(parser->startNode == NULL){
-        fprintf(stderr, "EMPTY PROGRAM\n");
-        return;
+char* ReadInputFile(Arena* arena, const char* fileName){
+    FILE* fp = fopen(fileName, "rb");
+    if(!fp){
+        fprintf(stderr, "Can't open the file: %s", fileName);
+        abort();
     }
-    ASTNodeType daughterNodeType = parser->startNode->nodeType;
-    switch (daughterNodeType) {
-        case NODE_DIV:
-        case NODE_EQ:
-        case NODE_MINUS:
-        case NODE_PLUS:
-        case NODE_MUL:
-            AnalyseBinaryOp(parser, daughterNode);
-            break;
-        case NODE_IF_ELSE:
-            AnalyseIfElse(parser, daughterNode);
-            break;
-        case NODE_STMNT:
-            AnalyseStmt(parser, daughterNode);
-            break;
+    if(fseek(fp, 0, SEEK_END) != 0){
+        fprintf(stderr, "Can't find file end: %s", fileName);
+        fclose(fp);
+        abort();
+    }
+    long size = ftell(fp);
+    if (size < 0){
+        fprintf(stderr, "Invalid file size: %s", fileName);
+        fclose(fp);
+        abort();
+    }
+    rewind(fp);
+    char* buffer;
+    ARENA_ERROR err = makeArena(arena, (size + 1));
+    if(err != ARENA_OK){
+        fprintf(stderr, "Could not make Input file Arena: %s", ArenaErrorNames[err]);
+        abort();
+    }
+    err = PUSH_EMPTY_ARRAY_IN_ARENA(arena, char, (size + 1), buffer);
+    if(err != ARENA_OK){
+        fprintf(stderr, "Could not allocate in arena: %s", ArenaErrorNames[err]);
+        printArenaInfo(arena);
+        abort();
+    }
+    size_t read_size = fread(buffer, 1, size, fp);
+    if (read_size != (size_t)size){
+        fprintf(stderr, "Could not copy the whoel file: %s", fileName);
+        removeArena(arena);
+        fclose(fp);
+        abort();
+    }
+    buffer[size] = '\0'; // For safety.
+    fclose(fp);
+    return buffer;
+}
+
+void ParseCMDArgs(int numArgs, char* args[]){
+    if(numArgs <= 1){
+        fprintf(stderr, "Please specify actions for the compiler, such as:\n");
+        fprintf(stderr, "                                                 `build`!:\n");
+        abort();
+    }
+    if(numArgs <= 2){
+        if(!strcmp(args[1], "build")){
+            fprintf(stderr, "Please specify the path of input file to be compiled!\n");
+            abort();
+        } else {
+            fprintf(stderr, "Expected correct action for the compiler!\n");
+            abort();
+        }
+    }
+    if(numArgs > 3){
+        fprintf(stderr, "Unexpected arguments.\n");
+        abort();
+    }
+    if(numArgs == 3){
+        if(!strcmp(args[1], "build"))
+            return;
+        else {
+            fprintf(stderr, "Expected correct action for the compiler!\n");
+            abort();
+        }
     }
 }
 
 //TODO : Semantic Analysis. Made a symbol Stack for that to track symbol and types. If a variable is declared before it's used. If it exists in a scope.
 //TODO : Type system? Infer type of expression-result without doing anything about it.
 //TODO : Hardest thing after semantic analysis: Optimization and Generation of Assembly.
-int main(){
+int main(int numArgs, char* args[]){
+    ParseCMDArgs(numArgs, args);
+    Arena inputFileArena;
+    const char* sampleProgram = ReadInputFile(&inputFileArena, args[2]);
     Arena LexerArena;
     ARENA_ERROR err = makeArena(&LexerArena, KiB(1));
     if(err != ARENA_OK){
@@ -1425,7 +1329,6 @@ int main(){
         return 0;
     }
     DFA* arithDFA = CreateDFA(&LexerArena);
-    const char* sampleProgram = "{ if (x < 3) {} else {}; }";
     Tokenizer* mainTokenizer = CreateTokenizer(&LexerArena, sampleProgram);
     Tokens* tokenizedProgram = StartTokenizing(&LexerArena, arithDFA, mainTokenizer);
     printTokens(tokenizedProgram);
@@ -1440,6 +1343,5 @@ int main(){
     StartParsing(&ParserArena, mainParser);
     removeArena(&LexerArena);
     removeArena(&ParserArena);
-    //AnalyseAST(mainParser);
     return 0;
 }
