@@ -168,7 +168,6 @@ typedef struct{
     dState currState;
 }DFA;
 
-// NOTE : Automation for the future.
 DFA* CreateDFA(Arena* arena){
     DFA* tempDFA;
     ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, DFA, tempDFA);
@@ -177,58 +176,17 @@ DFA* CreateDFA(Arena* arena){
         printArenaInfo(arena);
         abort();
     }
-    int tableIndex;
-    // First row.
-    tableIndex = D_STATE_S * DFAInputNum + Digit;
-    tempDFA->state[tableIndex] = D_STATE_I;
-    tableIndex++;
-    tempDFA->state[tableIndex] = D_STATE_O;
-    tableIndex++;
-    tempDFA->state[tableIndex] = D_STATE_F;
-    tableIndex++;
-    tempDFA->state[tableIndex] = D_STATE_ST;
 
-    // Second row.
-    tableIndex = D_STATE_I * DFAInputNum + Digit;
-    tempDFA->state[tableIndex] = D_STATE_I;
-    tableIndex++;
-    tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
-    tableIndex++;
-    tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
-    tableIndex++;
-    tempDFA->state[tableIndex] = D_STATE_WRONG_INPUT; // Can't have number concatenated with characters, that start from numbers. (Even the inverse isn't supported righ t now.
+    const dState transitions[DFAStatesNum][DFAInputNum] = {
+        [D_STATE_S]  = { D_STATE_I,               D_STATE_O,               D_STATE_F,               D_STATE_ST              },
+        [D_STATE_I]  = { D_STATE_I,               D_STATE_NOT_ERROR_STATE, D_STATE_NOT_ERROR_STATE, D_STATE_WRONG_INPUT     },
+        [D_STATE_O]  = { D_STATE_NOT_ERROR_STATE, D_STATE_NOT_ERROR_STATE, D_STATE_NOT_ERROR_STATE, D_STATE_NOT_ERROR_STATE },
+        [D_STATE_F]  = { D_STATE_NOT_ERROR_STATE, D_STATE_NOT_ERROR_STATE, D_STATE_F,               D_STATE_NOT_ERROR_STATE },
+        [D_STATE_ST] = { D_STATE_WRONG_INPUT,     D_STATE_NOT_ERROR_STATE, D_STATE_NOT_ERROR_STATE, D_STATE_ST              },
+    };
 
-    // Third row.
-    tableIndex = D_STATE_O * DFAInputNum + Digit;
-    tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
-    tableIndex++;
-    tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
-    tableIndex++;
-    tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
-    tableIndex++;
-    tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
-
-    // Fourth row.
-    tableIndex = D_STATE_F * DFAInputNum + Digit;
-    tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
-    tableIndex++;
-    tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
-    tableIndex++;
-    tempDFA->state[tableIndex] = D_STATE_F;
-    tableIndex++;
-    tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
-
-    // I'd actually want there to be string123, but will make it happen letter.
-    tableIndex = D_STATE_ST * DFAInputNum + Digit;
-    tempDFA->state[tableIndex] = D_STATE_WRONG_INPUT;
-    tableIndex++;
-    tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
-    tableIndex++;
-    tempDFA->state[tableIndex] = D_STATE_NOT_ERROR_STATE;
-    tableIndex++;
-    tempDFA->state[tableIndex] = D_STATE_ST;
-
-    fprintf(stderr, "Made simple arithematic DFA!\n");
+    memcpy(tempDFA->state, transitions, sizeof(transitions));
+    tempDFA->currState = D_STATE_S;
     return tempDFA;
 }
 
@@ -1201,9 +1159,10 @@ void StartParsing(Arena* arena, Parser* parser){
 typedef struct{
     SimpleString*  name;
     PRIMITIVE_TYPE type;
+    i16          offset; // in bytes.
 }Symbol;
 
-typedef struct{ // Symbol stack is only for semantic analysis, so we would need to know the type of it, but we won't do any maths.
+typedef struct{ // This stack will firstly be used for semantic analysis, then it will be used as a runtime stack.
     Symbol data[MAX_SYMBOL_STACK_SIZE];
     i16    topStackPointer;
 }SymbolStack;
@@ -1230,7 +1189,6 @@ SymbolStack* CreateSymbolStack(Arena* arena){
     temp->topStackPointer = 0;
     return temp;
 }
-
 
 i16 GetStackTop(SymbolStack* stack){
     return stack->topStackPointer;
@@ -1275,6 +1233,17 @@ STACK_ERR SetTopPointer(SymbolStack* stack, u16 newTop){ // This will be used wh
     return STACK_OK;
 }
 
+i64 GetIDOffsetInStack(SymbolStack* stack, SimpleString* ID){
+    i16* symbolPosInStack;
+    STACK_ERR err = FindSymbolInStack(stack, ID, symbolPosInStack);
+    if(err != STACK_OK){
+        fprintf(stderr, "Runtime error: %s with symbol: ", StackErrorNames[err]);
+        PrintSimpleString(ID);
+        fprintf(stderr, "\n");
+        abort();
+    }
+    return stack->data[*symbolPosInStack].offset;
+}
 
 // Check Type (Not useful right now as we only have one type).
 // Check Symbol existence.
@@ -1619,6 +1588,8 @@ _Bool StartSemanticAnalysis(SymbolStack* stack, ASTNode* node){
     return AnalyzeBlock(stack, currentScopePointer, node);
 }
 
+// Type inference??
+
 char* ReadInputFile(Arena* arena, const char* fileName){
     FILE* fp = fopen(fileName, "rb");
     if(!fp){
@@ -1690,9 +1661,13 @@ void ParseCMDArgs(int numArgs, char* args[]){
     }
 }
 
-//TODO : Semantic Analysis. Made a symbol Stack for that to track symbol and types. If a variable is declared before it's used. If it exists in a scope.
-//TODO : Type system? Infer type of expression-result without doing anything about it.
 //TODO : Hardest thing after semantic analysis: Optimization and Generation of Assembly.
+// Am thinking if I should do SSA? If I fail to emit assembly through the AST then I will.
+// I think I understood why SSAs are important, especially for a serious language where we may want to do optmizations, even naive ones we can think of ourselves, or more complex ones that have been documented and are shared knowledge.
+// TODO : Will practice assembly for a day or so.
+
+//TODO : Inference and operator precedence.
+
 int main(int numArgs, char* args[]){
     ParseCMDArgs(numArgs, args);
     Arena inputFileArena;
