@@ -218,6 +218,7 @@ typedef enum{
 typedef enum{
     KW_IF,
     KW_ELSE,
+    KW_PRINT,
     KWS_NUM // Number of keywords
 }KEYWORD_TYPE;
 
@@ -255,7 +256,7 @@ char* OperatorNames[] = {
 char* KeyWordNames[] = {
     "if",
     "else",
-    "int",
+    "print",
 };
 
 char* PrimitiveTypeNames[] = {
@@ -545,21 +546,25 @@ void printTokens(Tokens* tokens){
 
     Complete Simple Grammar:
 
-    S          -> Block | empty
-    Block      -> { Stmnt } NuBlock
-    NuBlock    -> Block | empty
-    Stmnt      -> AssignExp NuStmnt | IfExp NuStmnt | empty NuStmnt
-    NuStmnt    -> ; Stmnt | empty <- It will only look for another statement if there's already a semicolon.
-    Exp        -> Factor NuExp | Number NuExp | ID NuExp
-    Factor     -> ( Exp )
-    AssignExp  -> ID : Type = Exp
-    NuExp      -> BinaryOp Exp | empty
-    IfExp      -> 'if' ( CompareExp ) Block Elsepart
-    CompareExp -> ID CompareOp Exp
-    Elsepart   -> 'else' Block | empty
-    Type       -> 'int'
-    BinaryOp   -> + | - | * | /
-    CompareOp  -> < | >
+    S           -> Block | empty
+    Block       -> { Stmnt } NuBlock
+    NuBlock     -> Block | empty
+    Stmnt       -> AssignExp NuStmnt | IfExp NuStmnt | PrintExp NuStmnt | empty NuStmnt
+    NuStmnt     -> ; Stmnt | empty <- It will only look for another statement if there's already a semicolon.
+    Exp         -> SubExp LowPresExp
+    LowPresExp  -> BOPLP SubExp LowPresExp | empty
+    SubExp      -> ID HighPresExp | Num HighPresExp | Factor HighPresExp <- I could make ID and Num to a 'term' function but I feel like maybe it's too many function calls for just one token check?
+    HighPresExp -> BOPHP SubExp | empty
+    Factor      -> ( Exp )
+    AssignExp   -> ID : Type = Exp
+    IfExp       -> 'if' ( CompareExp ) Block Elsepart
+    PrintExp    -> 'print'(ID) | 'print'(Exp) <- Rudamentry print operation.
+    CompareExp  -> ID CompareOp Exp
+    Elsepart    -> 'else' Block | empty
+    Type        -> 'int'
+    BOPLP       -> + | -
+    BOPHP       -> * | /
+    CompareOp   -> < | >
 
 */
 
@@ -577,6 +582,7 @@ typedef enum { // Since I have lined up OP enum with AST for easy assignment, an
     NODE_EMPTY,
     NODE_STMNT,
     NODE_COMPARE_EXP,
+    NODE_PRINT,
     NODE_BLOCK,
     NODE_INVALID,
     NODE_NODES_NUM,
@@ -603,6 +609,7 @@ const char* ASTNodeNames[] = {
     "NODE_EMPTY",
     "NODE_STMNT",
     "NODE_COMPARE_EXP",
+    "NODE_PRINT",
     "NODE_BLOCK",
     "NODE_INVALID",
     "NODE_NODES_NUM",
@@ -639,6 +646,9 @@ struct ASTNode{
             ASTNode* compareOpNode;
             ASTNode* ExpNode;
         }CompareExp;
+        struct {
+            ASTNode* ValueNode;
+        }PrintExp;
         struct{
             SimpleString Name;
             PRIMITIVE_TYPE type;
@@ -742,22 +752,43 @@ _Bool CheckColon(Parser* parser){
     return FALSE;
 }
 
-ASTNode* NCheckBinaryOp(Arena* arena, Parser* parser){
-    fprintf(stderr, "Checking binary OP at: %d\n", parser->tokenPos);
+ASTNode* NCheckLowPresBinaryOP(Arena* arena, Parser* parser){
+    fprintf(stderr, "Checking LowPres OP at: %d\n", parser->tokenPos);
     TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
     if(currTok.type == TOKEN_OPERATOR){
         OPERATOR_TYPE op = currTok.TokenValue.operator;
-        if(op == OP_DIV || op == OP_MINUS || op == OP_MUL || op == OP_PLUS){
+        if(op == OP_MINUS || op == OP_PLUS){
             ASTNode* currNode;
             ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, ASTNode, currNode);
             if (err != ARENA_OK) {
-                fprintf(stderr, "Couldn't build AST: BINARY PARENT NODE: %s", ArenaErrorNames[err]);
+                fprintf(stderr, "Couldn't build AST: BINARY LP NODE: %s", ArenaErrorNames[err]);
                 printArenaInfo(arena);
                 abort();
             }
             ASTNodeType type = (ASTNodeType)parser->tok->tokens[parser->tokenPos].TokenValue.operator;
             currNode->nodeType = type;
-            //fprintf(stderr, "OPERATOR TOKEN AT: %d\n", parser->tokenPos);
+            parser->tokenPos++;
+            return currNode;
+        }
+    }
+    return NULL;
+}
+
+ASTNode* NCheckHighPresBinaryOP(Arena* arena, Parser* parser){
+    fprintf(stderr, "Checking HighPres OP at: %d\n", parser->tokenPos);
+    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
+    if(currTok.type == TOKEN_OPERATOR){
+        OPERATOR_TYPE op = currTok.TokenValue.operator;
+        if(op == OP_DIV || op == OP_MUL){
+            ASTNode* currNode;
+            ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, ASTNode, currNode);
+            if (err != ARENA_OK) {
+                fprintf(stderr, "Couldn't build AST: BINARY HP NODE: %s", ArenaErrorNames[err]);
+                printArenaInfo(arena);
+                abort();
+            }
+            ASTNodeType type = (ASTNodeType)parser->tok->tokens[parser->tokenPos].TokenValue.operator;
+            currNode->nodeType = type;
             parser->tokenPos++;
             return currNode;
         }
@@ -808,9 +839,10 @@ ASTNode* NCheckNum(Arena* arena, Parser* parser){
     return NULL;
 }
 
-ASTNode* NCheckNuExp(Arena* arena, Parser* parser);
-
-ASTNode* ECheckExp(Arena* arena, Parser* parser);
+ASTNode* NCheckExp(Arena* arena, Parser* parser);
+ASTNode* NCheckLowPresExp(Arena* arena, Parser* parser);
+ASTNode* NCheckSubExp(Arena* arena, Parser* parser);
+ASTNode* NCheckHighPresExp(Arena* arena, Parser* parser);
 
 ASTNode* NCheckFactor(Arena* arena, Parser* parser){
     fprintf(stderr, "Checking Factor at: %d\n", parser->tokenPos);
@@ -818,7 +850,7 @@ ASTNode* NCheckFactor(Arena* arena, Parser* parser){
     u16 prevTokPos = parser->tokenPos;
     ASTNode* currNode;
     if(CheckLParen(parser)){
-        currNode = ECheckExp(arena, parser);
+        currNode = NCheckExp(arena, parser);
         if(currNode == NULL){
             fprintf(stderr, "EXPECTED EXP at: %d", parser->tokenPos);
             abort();
@@ -898,7 +930,11 @@ ASTNode* CheckCompareExp(Arena* arena, Parser* parser){
     currNode->Value.CompareExp.IDNode = IDNode;
     ASTNode* CompOpNode = CheckCompareOp(arena, parser);
     currNode->Value.CompareExp.compareOpNode = CompOpNode;
-    ASTNode* ExpNode = ECheckExp(arena, parser);
+    ASTNode* ExpNode = NCheckExp(arena, parser);
+    if(ExpNode == NULL){
+        fprintf(stderr, "Expected EXP at: %d\n", parser->tokenPos);
+        abort();
+    }
     currNode->Value.CompareExp.ExpNode= ExpNode;
     return currNode;
 }
@@ -936,6 +972,50 @@ PRIMITIVE_TYPE CheckType(Parser* parser){
     }
 }
 
+ASTNode* NCheckPrintExp(Arena* arena, Parser* parser){
+    fprintf(stderr, "Checking PrintExp at: %d\n", parser->tokenPos);
+    TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
+    u16 prevPos = parser->tokenPos;
+    if(currTok.type == TOKEN_KEYWORD){
+        ASTNode* currNode;
+        if (currTok.TokenValue.keyword == KW_PRINT) {
+            ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, ASTNode, currNode);
+            if (err != ARENA_OK) {
+                fprintf(stderr, "Couldn't build AST: KEYWORD NODE: %s", ArenaErrorNames[err]);
+                printArenaInfo(arena);
+                abort();
+            }
+        } else {
+            return NULL;
+        }
+        currNode->nodeType = NODE_PRINT;
+        parser->tokenPos++;
+        _Bool isThere;
+        isThere = CheckLParen(parser);
+        if(!isThere){
+            fprintf(stderr, "EXPECTED '(' at: %d", parser->tokenPos);
+            abort();
+        }
+        ASTNode* printValueNode = NCheckExp(arena, parser);
+        if(printValueNode == NULL){
+            printValueNode = NCheckID(arena, parser);
+            if(printValueNode == NULL){
+                fprintf(stderr, "Expected print contents at: %d\n", parser->tokenPos);
+                abort();
+            }
+        }
+        isThere = CheckRParen(parser);
+        if(!isThere){
+            fprintf(stderr, "EXPECTED ')' at: %d", parser->tokenPos);
+            abort();
+        }
+        currNode->Value.PrintExp.ValueNode = printValueNode;
+        return currNode;
+    }
+    parser->tokenPos = prevPos;
+    return NULL;
+}
+
 ASTNode* NCheckAssignExp(Arena* arena, Parser* parser){
     fprintf(stderr, "Checking AssignExp at: %d\n", parser->tokenPos);
     TokenInfo currTok = parser->tok->tokens[parser->tokenPos];
@@ -946,7 +1026,11 @@ ASTNode* NCheckAssignExp(Arena* arena, Parser* parser){
         PRIMITIVE_TYPE type = CheckType(parser);
         idNode->Value.ID.type = type;
         ASTNode* equalNode = CheckEqual(arena, parser);
-        ASTNode* valNode = ECheckExp(arena, parser);
+        ASTNode* valNode = NCheckExp(arena, parser);
+        if(valNode == NULL){
+            fprintf(stderr, "Expected EXP at: %d\n", parser->tokenPos);
+            abort();
+        }
         equalNode->Value.AssignmentOperation.IDNode = idNode;
         equalNode->Value.AssignmentOperation.RValueNode = valNode;
         return equalNode;
@@ -961,15 +1045,15 @@ ASTNode* NCheckIfExp(Arena* arena, Parser* parser){
     u16 prevPos = parser->tokenPos;
     if(currTok.type == TOKEN_KEYWORD){
         ASTNode* currNode;
-        ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, ASTNode, currNode);
-        if (err != ARENA_OK) {
-            fprintf(stderr, "Couldn't build AST: KEYWORD NODE: %s", ArenaErrorNames[err]);
-            printArenaInfo(arena);
-            abort();
-        }
-        if (currTok.TokenValue.keyword != KW_IF) {
-            fprintf(stderr, "EXPECTED IF AT: %d", parser->tokenPos);
-            abort();
+        if (currTok.TokenValue.keyword == KW_IF) {
+            ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, ASTNode, currNode);
+            if (err != ARENA_OK) {
+                fprintf(stderr, "Couldn't build AST: KEYWORD NODE: %s", ArenaErrorNames[err]);
+                printArenaInfo(arena);
+                abort();
+            }
+        } else {
+            return NULL;
         }
         currNode->nodeType = NODE_IF_ELSE;
         parser->tokenPos++;
@@ -996,71 +1080,94 @@ ASTNode* NCheckIfExp(Arena* arena, Parser* parser){
     return NULL;
 }
 
-ASTNode* NCheckNuExp(Arena* arena, Parser* parser){
-    u16 prevTokPos = parser->tokenPos;
-    fprintf(stderr, "Checking NuExp at: %d\n", prevTokPos);
-    ASTNode* binaryNode = NCheckBinaryOp(arena, parser);
-    if(binaryNode != NULL){
-        ASTNode* expNode = ECheckExp(arena, parser);
-        if(expNode != NULL){
-            binaryNode->Value.BinaryOperation.rightNode = expNode;
-            return binaryNode;
+ASTNode* NCheckHighPresExp(Arena* arena, Parser* parser){
+    u16 prevPos = parser->tokenPos;
+    ASTNode* currNode;
+    currNode = NCheckHighPresBinaryOP(arena, parser);
+    if(currNode != NULL){
+        ASTNode* subExpNode = NCheckSubExp(arena, parser);
+        if(subExpNode == NULL){
+            fprintf(stderr, "Expected SUBEXP at: %d\n", parser->tokenPos);
+            abort();
         }
+        return currNode->Value.BinaryOperation.rightNode = subExpNode;
     }
-    parser->tokenPos = prevTokPos;
     return NULL;
 }
 
-ASTNode* ECheckExp(Arena* arena, Parser* parser){
+ASTNode* NCheckLowPresExp(Arena* arena, Parser* parser){
+    u16 prevPos = parser->tokenPos;
+    ASTNode* currNode;
+    currNode = NCheckLowPresBinaryOP(arena, parser);
+    if(currNode != NULL){
+        ASTNode* subExpNode = NCheckSubExp(arena, parser);
+        if(subExpNode == NULL){
+            fprintf(stderr, "Expected SUBEXP at: %d\n", parser->tokenPos);
+            abort();
+        }
+        ASTNode* lowPresExpNode = NCheckLowPresExp(arena, parser);
+        if(lowPresExpNode == NULL){
+            currNode->Value.BinaryOperation.rightNode = subExpNode;
+            return currNode;
+        } else {
+            lowPresExpNode->Value.BinaryOperation.leftNode = subExpNode;
+            currNode->Value.BinaryOperation.rightNode = lowPresExpNode;
+            return currNode;
+            }
+        }
+    return NULL;
+}
+
+ASTNode* NCheckSubExp(Arena* arena, Parser* parser){
     u16 prevPos = parser->tokenPos;
     fprintf(stderr, "Checking Exp at: %d\n", prevPos);
     ASTNode* currNode;
     currNode = NCheckFactor(arena, parser);
     if(currNode != NULL){
-        ASTNode* nuExpNode = NCheckNuExp(arena, parser);
-        if(nuExpNode == NULL)
+        ASTNode* highPresExpNode = NCheckHighPresExp(arena, parser);
+        if(highPresExpNode == NULL)
             return currNode;
-        nuExpNode->Value.BinaryOperation.leftNode = currNode;
-        return nuExpNode;
+        highPresExpNode->Value.BinaryOperation.leftNode = currNode;
+        return highPresExpNode;
     }
     parser->tokenPos = prevPos;
     currNode = NCheckNum(arena, parser);
     if(currNode != NULL){
-        ASTNode* nuExpNode = NCheckNuExp(arena, parser);
-        if(nuExpNode != NULL){
-            nuExpNode->Value.BinaryOperation.leftNode = currNode;
-        }
-        else {
+        ASTNode* highPresExpNode = NCheckHighPresExp(arena, parser);
+        if(highPresExpNode != NULL){
+            highPresExpNode->Value.BinaryOperation.leftNode = currNode;
+            return highPresExpNode;
+        } else {
             return currNode;
         }
-        return nuExpNode;
     }
     parser->tokenPos = prevPos;
     currNode = NCheckID(arena, parser);
     if(currNode != NULL){
-        ASTNode* nuExpNode = NCheckNuExp(arena, parser);
-        if(nuExpNode != NULL){
-            nuExpNode->Value.BinaryOperation.leftNode = currNode;
-        }
-        else {
+        ASTNode* highPresExpNode = NCheckHighPresExp(arena, parser);
+        if(highPresExpNode != NULL){
+            highPresExpNode->Value.BinaryOperation.leftNode = currNode;
+            return highPresExpNode;
+        } else {
             return currNode;
         }
-        return nuExpNode;
     }
-    parser->tokenPos = prevPos;
-    if(prevPos == 0){
-        ASTNode* retNode;
-        ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, ASTNode, retNode);
-        if (err != ARENA_OK) {
-            fprintf(stderr, "Couldn't build AST: EMPTY EXP NODE: %s", ArenaErrorNames[err]);
-            printArenaInfo(arena);
-            abort();
-        }
-        retNode->nodeType = NODE_EMPTY;
-        return retNode;
-    }
-    fprintf(stderr, "EXPECTED EXP at: %d", prevPos);
+    fprintf(stderr, "EXPECTED SUBEXP at: %d", prevPos);
     abort();
+}
+
+ASTNode* NCheckExp(Arena* arena, Parser* parser){
+    fprintf(stderr, "Checking Exp at: %d\n", parser->tokenPos);
+    ASTNode* SubExpNode = NCheckSubExp(arena, parser);
+    if(SubExpNode == NULL)
+        return NULL;
+    ASTNode* LowPresExpNode = NCheckLowPresExp(arena, parser);
+    if(LowPresExpNode == NULL){
+        return SubExpNode;
+    } else {
+        LowPresExpNode->Value.BinaryOperation.leftNode = SubExpNode;
+        return LowPresExpNode;
+    }
 }
 
 ASTNode* ECheckStmnt(Arena* arena, Parser* parser);
@@ -1099,6 +1206,10 @@ ASTNode* ECheckStmnt(Arena* arena, Parser* parser){
     if(currStmntNode == NULL){
         parser->tokenPos = prevPos;
         currStmntNode = NCheckIfExp(arena, parser);
+    }
+    if(currStmntNode == NULL){
+        parser->tokenPos = prevPos;
+        currStmntNode = NCheckPrintExp(arena, parser);
     }
     if(currStmntNode == NULL){
         statementParsed = FALSE;
@@ -1255,6 +1366,8 @@ _Bool AnalyzeBinaryOp(SymbolStack* stack, i16 currentScopePointer, ASTNode* node
 _Bool AnalyzeCompOp(SymbolStack* stack, i16 currentScopePointer, ASTNode* node);
 
 _Bool AnalyzeIfElse(SymbolStack* stack, i16 currentScopePointer, ASTNode* node);
+
+_Bool AnalyzePrint(SymbolStack* stack, i16 currentScopePointer, ASTNode* node);
 
 _Bool AnalyzeStmnt(SymbolStack* stack, i16 currentScopePointer, ASTNode* node);
 
@@ -1420,6 +1533,35 @@ _Bool AnalyzeIfElse(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
     }
 }
 
+_Bool AnalyzePrint(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
+    fprintf(stderr, "Analyzing Print.\n");
+    ASTNode* valueNode =  node->Value.PrintExp.ValueNode;
+    if(valueNode->nodeType == NODE_LEAF_ID){
+        AnalyzeID(stack, currentScopePointer, valueNode, FALSE);
+        return TRUE;
+    }
+    ASTNodeType ValueNodeType = valueNode->nodeType;
+    fprintf(stderr, "The RValue node is: %s\n", ASTNodeNames[ValueNodeType]);
+    switch (ValueNodeType) {
+        case NODE_INVALID  :
+        case NODE_LEAF_NUM :
+        case NODE_EMPTY    : {
+            return TRUE;
+        }
+        case NODE_DIV   :
+        case NODE_PLUS  :
+        case NODE_MINUS :
+        case NODE_MUL   : {
+            return AnalyzeBinaryOp(stack, currentScopePointer, node->Value.PrintExp.ValueNode);
+        }
+        case NODE_LEAF_ID : {
+            AnalyzeID(stack, currentScopePointer, node->Value.PrintExp.ValueNode, FALSE);
+            break;
+        }
+    }
+    return TRUE;
+}
+
 _Bool AnalyzeStmnt(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
     fprintf(stderr, "Analyzing Statement.\n");
     ASTNodeType CurrentStmntType = node->Value.StmtList.currentStmntNode->nodeType;
@@ -1451,35 +1593,20 @@ _Bool AnalyzeStmnt(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
             CurrentStatementAnalysis = AnalyzeIfElse(stack, currentScopePointer, CurrentStmntNode);
             break;
         }
+        case NODE_PRINT: {
+            CurrentStatementAnalysis = AnalyzePrint(stack, currentScopePointer, CurrentStmntNode);
+            break;
+        }
     }
     ASTNodeType NextStmntType = node->Value.StmtList.nextStmntNode->nodeType;
     ASTNode* NextStmntNode = node->Value.StmtList.nextStmntNode;
     fprintf(stderr, "The next statement node is: %s\n", ASTNodeNames[NextStmntType]);
+    // The next statement will always be another statement.
     _Bool NextStatementAnalysis;
     switch (NextStmntType) {
         case NODE_INVALID  :
-        case NODE_LEAF_NUM :
         case NODE_EMPTY    : {
             NextStatementAnalysis = TRUE;
-            break;
-        }
-        case NODE_DIV   :
-        case NODE_PLUS  :
-        case NODE_MINUS :
-        case NODE_MUL   : {
-            NextStatementAnalysis = AnalyzeBinaryOp(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode);
-            break;
-        }
-        case NODE_LEAF_ID : {
-            AnalyzeID(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode, FALSE);
-            break;
-        }
-        case NODE_ASSIGNMENT: {
-            NextStatementAnalysis = AnalyzeAssignment(stack, currentScopePointer, NextStmntNode);
-            break;
-        }
-        case NODE_IF_ELSE: {
-            NextStatementAnalysis = AnalyzeIfElse(stack, currentScopePointer, NextStmntNode);
             break;
         }
         case NODE_STMNT: {
@@ -1487,7 +1614,7 @@ _Bool AnalyzeStmnt(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
             break;
         }
         default: {
-            NextStatementAnalysis = TRUE;
+            NextStatementAnalysis = FALSE;
         }
     }
     return CurrentStatementAnalysis && NextStatementAnalysis;
@@ -1501,28 +1628,8 @@ _Bool AnalyzeBlock(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
     _Bool CurrentBlockAnalysis;
     switch (CurrentBlockType) {
         case NODE_INVALID  :
-        case NODE_LEAF_NUM :
         case NODE_EMPTY    : {
             CurrentBlockAnalysis = TRUE;
-            break;
-        }
-        case NODE_DIV   :
-        case NODE_PLUS  :
-        case NODE_MINUS :
-        case NODE_MUL   : {
-            CurrentBlockAnalysis = AnalyzeBinaryOp(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode);
-            break;
-        }
-        case NODE_LEAF_ID : {
-            AnalyzeID(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode, FALSE);
-            break;
-        }
-        case NODE_ASSIGNMENT: {
-            CurrentBlockAnalysis = AnalyzeAssignment(stack, currentScopePointer, CurrentBlockNode);
-            break;
-        }
-        case NODE_IF_ELSE: {
-            CurrentBlockAnalysis = AnalyzeIfElse(stack, currentScopePointer, CurrentBlockNode);
             break;
         }
         case NODE_STMNT: {
@@ -1539,32 +1646,8 @@ _Bool AnalyzeBlock(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
     _Bool NextBlockAnalysis;
     switch (NextBlockType) {
         case NODE_INVALID  :
-        case NODE_LEAF_NUM :
         case NODE_EMPTY    : {
             NextBlockAnalysis = TRUE;
-            break;
-        }
-        case NODE_DIV   :
-        case NODE_PLUS  :
-        case NODE_MINUS :
-        case NODE_MUL   : {
-            NextBlockAnalysis = AnalyzeBinaryOp(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode);
-            break;
-        }
-        case NODE_LEAF_ID : {
-            AnalyzeID(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode, FALSE);
-            break;
-        }
-        case NODE_ASSIGNMENT: {
-            NextBlockAnalysis = AnalyzeAssignment(stack, currentScopePointer, NextBlockNode);
-            break;
-        }
-        case NODE_IF_ELSE: {
-            NextBlockAnalysis = AnalyzeIfElse(stack, currentScopePointer, NextBlockNode);
-            break;
-        }
-        case NODE_STMNT: {
-            NextBlockAnalysis = AnalyzeStmnt(stack, currentScopePointer, CurrentBlockNode);
             break;
         }
         case NODE_BLOCK: {
@@ -1572,7 +1655,7 @@ _Bool AnalyzeBlock(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
             break;
         }
         default: {
-            return TRUE;
+            return NextBlockAnalysis = FALSE;
         }
     }
     return CurrentBlockAnalysis && NextBlockAnalysis;
@@ -1661,7 +1744,7 @@ void ParseCMDArgs(int numArgs, char* args[]){
     }
 }
 
-//TODO : Hardest thing after semantic analysis: Optimization and Generation of Assembly.
+//TODO : Am going to make an assembly emitter. Will make assembly helper functions and funcitons to emit assembly.
 // Am thinking if I should do SSA? If I fail to emit assembly through the AST then I will.
 // I think I understood why SSAs are important, especially for a serious language where we may want to do optmizations, even naive ones we can think of ourselves, or more complex ones that have been documented and are shared knowledge.
 // TODO : Will practice assembly for a day or so.
@@ -1673,7 +1756,7 @@ int main(int numArgs, char* args[]){
     Arena inputFileArena;
     const char* sampleProgram = ReadInputFile(&inputFileArena, args[2]);
     Arena LexerArena;
-    ARENA_ERROR err = makeArena(&LexerArena, KiB(1));
+    ARENA_ERROR err = makeArena(&LexerArena, KiB(2));
     if(err != ARENA_OK){
         fprintf(stderr, "Can't make Lexer Arena: %s", ArenaErrorNames[err]);
         return 0;
@@ -1686,7 +1769,7 @@ int main(int numArgs, char* args[]){
     Arena ParserArena;
     // We cannot remove this arena right now because the ID nodes reference it.
     //removeArena(&inputFileArena);
-    err = makeArena(&ParserArena, KiB(5));
+    err = makeArena(&ParserArena, KiB(10));
     if(err != ARENA_OK){
         fprintf(stderr, "Can't make Parser Arena: %s", ArenaErrorNames[err]);
         return 0;
