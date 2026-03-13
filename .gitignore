@@ -1,4 +1,4 @@
 a.out
 *.o
-AsmPractice/test
-AsmPractice/test.o
+nasmlib/test
+nasmlib/test.o
