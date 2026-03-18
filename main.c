@@ -1091,7 +1091,8 @@ ASTNode* NCheckHighPresExp(Arena* arena, Parser* parser){
             fprintf(stderr, "Expected SUBEXP at: %d\n", parser->tokenPos);
             abort();
         }
-        return currNode->Value.BinaryOperation.rightNode = subExpNode;
+        currNode->Value.BinaryOperation.rightNode = subExpNode;
+        return currNode;
     }
     return NULL;
 }
@@ -1332,7 +1333,7 @@ STACK_ERR FindSymbolInStack(SymbolStack* stack, SimpleString* ID, i16* stackPos)
     }
     if(!found)
         return STACK_SYMBOL_NOT_FOUND;
-    *stackPos = currentSymbol;
+    *stackPos = currentSymbol + 1;
     return STACK_SYMBOL_FOUND;
 }
 
@@ -1346,15 +1347,15 @@ STACK_ERR SetTopPointer(SymbolStack* stack, u16 newTop){ // This will be used wh
 }
 
 i64 GetIDOffsetInStack(SymbolStack* stack, SimpleString* ID){
-    i16* symbolPosInStack;
-    STACK_ERR err = FindSymbolInStack(stack, ID, symbolPosInStack);
-    if(err != STACK_OK){
+    i16 symbolPosInStack;
+    STACK_ERR err = FindSymbolInStack(stack, ID, &symbolPosInStack);
+    if(err != STACK_SYMBOL_FOUND){
         fprintf(stderr, "Runtime error: %s with symbol: ", StackErrorNames[err]);
         PrintSimpleString(ID);
         fprintf(stderr, "\n");
         abort();
     }
-    return stack->data[*symbolPosInStack].offset;
+    return stack->data[symbolPosInStack].offsetInCPUStack;
 }
 
 // Check Type (Not useful right now as we only have one type).
@@ -1449,10 +1450,12 @@ _Bool AnalyzeBinaryOp(SymbolStack* stack, i16 currentScopePointer, ASTNode* node
     ASTNodeType LeftNodeType = node->Value.BinaryOperation.leftNode->nodeType;
     _Bool LeftSuccess = TRUE;
     switch (LeftNodeType) {
-        case NODE_INVALID  :
         case NODE_LEAF_NUM :
+            fprintf(stderr, "Number is: %"PRId64"\n", node->Value.BinaryOperation.leftNode->Value.number);
+            break;
+        case NODE_INVALID  :
         case NODE_EMPTY    : {
-            return TRUE;
+            return FALSE;
         }
         case NODE_DIV   :
         case NODE_PLUS  :
@@ -1469,10 +1472,12 @@ _Bool AnalyzeBinaryOp(SymbolStack* stack, i16 currentScopePointer, ASTNode* node
     ASTNodeType RightNodeType = node->Value.BinaryOperation.rightNode->nodeType;
     _Bool RightSuccess = TRUE;
     switch (RightNodeType) {
-        case NODE_INVALID  :
         case NODE_LEAF_NUM :
+            fprintf(stderr, "Number is: %"PRId64"\n", node->Value.BinaryOperation.rightNode->Value.number);
+            break;
+        case NODE_INVALID  :
         case NODE_EMPTY    : {
-            return TRUE;
+            return FALSE;
         }
         case NODE_DIV   :
         case NODE_PLUS  :
@@ -1579,11 +1584,7 @@ _Bool AnalyzeStmnt(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
         case NODE_PLUS  :
         case NODE_MINUS :
         case NODE_MUL   : {
-            CurrentStatementAnalysis = AnalyzeBinaryOp(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode);
-            break;
-        }
-        case NODE_LEAF_ID : {
-            AnalyzeID(stack, currentScopePointer, node->Value.AssignmentOperation.RValueNode, FALSE);
+            CurrentStatementAnalysis = AnalyzeBinaryOp(stack, currentScopePointer, CurrentStmntNode);
             break;
         }
         case NODE_ASSIGNMENT: {
@@ -1652,7 +1653,7 @@ _Bool AnalyzeBlock(SymbolStack* stack, i16 currentScopePointer, ASTNode* node){
             break;
         }
         case NODE_BLOCK: {
-            NextBlockAnalysis = AnalyzeBlock(stack, currentScopePointer, CurrentBlockNode);
+            NextBlockAnalysis = AnalyzeBlock(stack, currentScopePointer, NextBlockNode);
             break;
         }
         default: {
@@ -1691,7 +1692,7 @@ const char* opNASMIns[] = {
 };
 
 Emitter* CreateEmitter(Arena* arena){
-    fprintf(stderr, "Started analysis.\n");
+    fprintf(stderr, "Created Emitter.\n");
     Emitter* temp;
     ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, Emitter, temp);
     if(err != ARENA_OK){
@@ -1704,10 +1705,12 @@ Emitter* CreateEmitter(Arena* arena){
         abort();
     }
     temp->runTimeStack = CreateSymbolStack(arena);
+    temp->stackTop = 8;
+    fprintf(temp->outputFile, "extern print_u64\n");
     fprintf(temp->outputFile, "section .text\n");
     fprintf(temp->outputFile, "global _start\n");
     fprintf(temp->outputFile, "_start:\n");
-    fprintf(temp->outputFile, "mov rbp, rsp:\n");
+    fprintf(temp->outputFile, "mov rbp, rsp\n");
     return temp;
 }
 
@@ -1715,26 +1718,20 @@ Emitter* CreateEmitter(Arena* arena){
 void EmitBinaryOperation(Emitter* emitter, i16 scope, ASTNode* node);
 void EmitIfStatement(Emitter* emitter, i16 scope, ASTNode* node);
 void EmitAssignment(Emitter* emitter, i16 scope, ASTNode* node); // Push to stack. // Evaluate R-Value and then push it to the stack.
-void EmitStatement(Emitter* emitter, i16 scope, ASTNode* node);
 void EmitPrint(Emitter* emitter, i16 scope, ASTNode* node);
-
+void EmitStatement(Emitter* emitter, i16 scope, ASTNode* node);
+void EmitBlock(Emitter* emitter, i16 scope, ASTNode* node);
 
 // I FINALLY UNDERSTAND WHY SSAs.
 
 void EmitLoadSymbol(Emitter* emitter, const char* reg, ASTNode* node){
-    i16 symbolInScope;
-    STACK_ERR serr = FindSymbolInStack(emitter->runTimeStack, &node->Value.ID.Name, &symbolInScope);
-    if(serr != STACK_OK){
-        fprintf(stderr, "Runtime stack err: %s", StackErrorNames[serr]);
-        abort();
-    }
-    fprintf(emitter->outputFile, "mov %s, [rbp-%d]\n", reg, emitter->runTimeStack->data[symbolInScope].offsetInCPUStack);
+    i16 offset = GetIDOffsetInStack(emitter->runTimeStack, &node->Value.ID.Name);
+    fprintf(emitter->outputFile, "mov %s, [rbp-%d]\n", reg, offset);
 }
 
 void EmitLoadNum(Emitter* emitter, const char* reg, ASTNode* node){
     fprintf(emitter->outputFile, "mov %s, %"PRId64"\n", reg, node->Value.number);
 }
-
 
 void EmitBinaryOperation(Emitter* emitter, i16 scope, ASTNode* node){
     ASTNodeType binNodeType = node->nodeType;
@@ -1798,7 +1795,8 @@ void EmitAssignment(Emitter* emitter, i16 scope, ASTNode* node){
         }
         default: EmitBinaryOperation(emitter, scope, RValueNode); break;
     }
-    fprintf(emitter->outputFile, "push rax\n");
+    fprintf(emitter->outputFile, "sub rsp, 8\n");
+    fprintf(emitter->outputFile, "mov [rbp-%d], rax\n",emitter->stackTop);
     Symbol ID;
     ID.name = &node->Value.AssignmentOperation.IDNode->Value.ID.Name;
     ID.type = node->Value.AssignmentOperation.IDNode->Value.ID.type;
@@ -1807,7 +1805,130 @@ void EmitAssignment(Emitter* emitter, i16 scope, ASTNode* node){
     PushSymbolToStack(emitter->runTimeStack, ID);
 }
 
-void EmitPrint(Emitter* emitter, i16 scope, ASTNode* node);
+void EmitPrint(Emitter* emitter, i16 scope, ASTNode* node){
+    ASTNode* valueNode =  node->Value.PrintExp.ValueNode;
+    ASTNodeType ValueNodeType = valueNode->nodeType;
+    fprintf(stderr, "The RValue node is: %s\n", ASTNodeNames[ValueNodeType]);
+    switch (ValueNodeType) {
+        case NODE_LEAF_ID:
+            EmitLoadSymbol(emitter, "rax", valueNode);
+            break;
+        case NODE_LEAF_NUM :
+            EmitLoadNum(emitter, "rax", valueNode);
+            break;
+        case NODE_INVALID  :
+        case NODE_EMPTY    : {
+            return;
+        }
+        case NODE_DIV   :
+        case NODE_PLUS  :
+        case NODE_MINUS :
+        case NODE_MUL   : {
+            EmitBinaryOperation(emitter, scope, valueNode);
+            break;
+        }
+    }
+    fprintf(emitter->outputFile, "call print_u64\n");
+}
+
+void EmitBlock(Emitter* emitter, i16 scope, ASTNode* node){
+    ASTNodeType CurrentBlockType = node->Value.BlockList.startOfCurrentBlockNode->nodeType;
+    ASTNode* CurrentBlockNode = node->Value.BlockList.startOfCurrentBlockNode;
+    switch (CurrentBlockType) {
+        case NODE_INVALID  :
+        case NODE_EMPTY    : {
+            break;
+        }
+        case NODE_STMNT: {
+            EmitStatement(emitter, scope, CurrentBlockNode);
+            break;
+        }
+        default: {
+            break;
+        }
+    }
+    i16 newScopePointer = GetStackTop(emitter->runTimeStack);
+    ASTNodeType NextBlockType = node->Value.BlockList.startOfNextBlockNode->nodeType;
+    ASTNode* NextBlockNode = node->Value.BlockList.startOfNextBlockNode;
+    switch (NextBlockType) {
+        case NODE_INVALID  :
+        case NODE_EMPTY    : {
+            break;
+        }
+        case NODE_BLOCK: {
+            EmitBlock(emitter, newScopePointer, NextBlockNode);
+            break;
+        }
+        default: {
+            break;
+        }
+    }
+}
+
+void EmitStatement(Emitter* emitter, i16 scope, ASTNode* node){
+    ASTNodeType CurrentStmntType = node->Value.StmtList.currentStmntNode->nodeType;
+    ASTNode* CurrentStmntNode = node->Value.StmtList.currentStmntNode;
+    switch (CurrentStmntType) {
+        case NODE_DIV   :
+        case NODE_PLUS  :
+        case NODE_MINUS :
+        case NODE_MUL   : {
+            EmitBinaryOperation(emitter, scope, CurrentStmntNode);
+            break;
+        }
+        case NODE_ASSIGNMENT: {
+            EmitAssignment(emitter, scope, CurrentStmntNode);
+            break;
+        }
+        case NODE_IF_ELSE: {
+            break;
+        }
+        case NODE_PRINT: {
+            EmitPrint(emitter, scope, CurrentStmntNode);
+            break;
+        }
+    }
+    ASTNodeType NextStmntType = node->Value.StmtList.nextStmntNode->nodeType;
+    ASTNode* NextStmntNode = node->Value.StmtList.nextStmntNode;
+    switch (NextStmntType) {
+        case NODE_INVALID  :
+        case NODE_EMPTY    : {
+            break;
+        }
+        case NODE_STMNT: {
+            EmitStatement(emitter, scope, NextStmntNode);
+            break;
+        }
+        default: {
+            break;
+        }
+    }
+}
+
+void StartEmitting(Emitter* emitter, ASTNode* node){
+    if(node == NULL){
+        fprintf(stderr, "Empty program.\n");
+        return;
+    }
+    i16 currentScopePointer = GetStackTop(emitter->runTimeStack);
+    EmitBlock(emitter, currentScopePointer, node);
+    fprintf(emitter->outputFile, "mov rax, 60\n");
+    fprintf(emitter->outputFile, "xor rdi, rdi\n");
+    fprintf(emitter->outputFile, "syscall\n");
+    fclose(emitter->outputFile);
+    fprintf(stderr, "Successfully emitted!\n");
+    return;
+}
+
+// Should take in the program save name as arg
+void GenerateBinary(){
+    system("nasm -f elf64 tempasmfile -o taf.o");
+    system("nasm -f elf64 nasmlib/print64.asm -o print64.o");
+    system("ld taf.o print64.o -o main");
+    system("rm taf.o");
+    system("rm print64.o");
+    system("rm tempasmfile");
+}
 
 char* ReadInputFile(Arena* arena, const char* fileName){
     FILE* fp = fopen(fileName, "rb");
@@ -1917,7 +2038,17 @@ int main(int numArgs, char* args[]){
     if(Analysis){
         fprintf(stderr, "Analysis true!");
     }
+    Arena BackendArena;
+    err = makeArena(&BackendArena, KiB(5));
+    if(err != ARENA_OK){
+        fprintf(stderr, "Can't make Backend Arena: %s", ArenaErrorNames[err]);
+        return 0;
+    }
+    Emitter* simpleEmitter = CreateEmitter(&BackendArena);
+    StartEmitting(simpleEmitter, mainParser->startNode);
+    GenerateBinary();
     removeArena(&LexerArena);
     removeArena(&ParserArena);
+    removeArena(&BackendArena);
     return 0;
 }
