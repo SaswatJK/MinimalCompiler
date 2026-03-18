@@ -1,11 +1,11 @@
-; Learning simple assembly: MOV, SYSCALLs, Arithematic and basic JMP + Conditions to emit assembly.
-
 ; .text | .data | .bss => read only | read/write | read/write + zero'ed out.
 
 section .bss
    digits resb 20 ; Reserve a buffer of 20 bytes, since an ASCII digit is just one byte, and 64 bit number is at most 20 bytes.
 
 section .text
+
+global print_u64
 
 print_u64:
     mov rcx, 0
@@ -45,15 +45,5 @@ print_u64:
     mov rdi, 1
     mov rsi, digits
     mov rdx, r13
-    syscall
-    ret
-
-global _start
-
-_start:
-    mov rax, 12739173891
-    call print_u64
-    mov rax, 60
-    xor rdi, rdi
     syscall
     ret
