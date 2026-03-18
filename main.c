@@ -1,3 +1,4 @@
+#include <bits/types/stack_t.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <inttypes.h>
@@ -1270,7 +1271,7 @@ void StartParsing(Arena* arena, Parser* parser){
 typedef struct{
     SimpleString*  name;
     PRIMITIVE_TYPE type;
-    i16          offset; // in bytes.
+    i16            offsetInCPUStack; // in bytes.
 }Symbol;
 
 typedef struct{ // This stack will firstly be used for semantic analysis, then it will be used as a runtime stack.
@@ -1672,6 +1673,135 @@ _Bool StartSemanticAnalysis(SymbolStack* stack, ASTNode* node){
 }
 
 // Type inference??
+
+// Simple emitter.
+
+typedef struct{
+    FILE* outputFile;
+    SymbolStack* runTimeStack;
+}Emitter;
+
+// was thinking of using the normal operatornames array but idk.
+const char* opNASMIns[] = {
+    "add",
+    "sub",
+    "mul",
+    "div"
+};
+
+Emitter* CreateEmitter(Arena* arena){
+    fprintf(stderr, "Started analysis.\n");
+    Emitter* temp;
+    ARENA_ERROR err = PUSH_EMPTY_OBJECT_IN_ARENA(arena, Emitter, temp);
+    if(err != ARENA_OK){
+        fprintf(stderr, "Could not make Emitter Arena: %s", ArenaErrorNames[err]);
+        abort();
+    }
+    temp->outputFile = fopen("tempasmfile", "w"); // Creating a temp file.
+    if (temp->outputFile == NULL) {
+        fprintf(stderr, "Error! opening file");
+        abort();
+    }
+    temp->runTimeStack = CreateSymbolStack(arena);
+    fprintf(temp->outputFile, "section .text\n");
+    fprintf(temp->outputFile, "global _start\n");
+    fprintf(temp->outputFile, "_start:\n");
+    return temp;
+}
+
+// Pretty sure scope isn't useful.
+void EmitBinaryOperation(Emitter* emitter, i16 scope, ASTNode* node);
+void EmitIfStatement(Emitter* emitter, i16 scope, ASTNode* node);
+void EmitAssignment(Emitter* emitter, i16 scope, ASTNode* node); // Push to stack. // Evaluate R-Value and then push it to the stack.
+void EmitStatement(Emitter* emitter, i16 scope, ASTNode* node);
+void EmitPrint(Emitter* emitter, i16 scope, ASTNode* node);
+
+
+// I FINALLY UNDERSTAND WHY SSAs.
+
+void emitLoadSymbol(Emitter* emitter, const char* reg, ASTNode* node){
+    i16 symbolInScope;
+    STACK_ERR serr = FindSymbolInStack(emitter->runTimeStack, &node->Value.ID.Name, &symbolInScope);
+    if(serr != STACK_OK){
+        fprintf(stderr, "Runtime stack err: %s", StackErrorNames[serr]);
+        abort();
+    }
+    fprintf(emitter->outputFile, "mov %s, [rbp-%d]\n", reg, emitter->runTimeStack->data[symbolInScope].offsetInCPUStack);
+}
+
+void emitLoadNum(Emitter* emitter, const char* reg, ASTNode* node){
+    fprintf(emitter->outputFile, "mov %s, %"PRId64"\n", reg, node->Value.number);
+}
+
+
+void EmitBinaryOperation(Emitter* emitter, i16 scope, ASTNode* node){ // Data after the operation will be stored in the r9. leaf data will be loaded in the r13 and r14.
+    ASTNodeType binNodeType = node->nodeType;
+    ASTNode* leftNode = node->Value.BinaryOperation.leftNode;
+    ASTNodeType leftNodeType = node->Value.BinaryOperation.leftNode->nodeType;
+    ASTNode* rightNode = node->Value.BinaryOperation.rightNode;
+    ASTNodeType rightNodeType = node->Value.BinaryOperation.rightNode->nodeType;
+    if((leftNodeType == NODE_LEAF_NUM || leftNodeType == NODE_LEAF_ID) && (rightNodeType == NODE_LEAF_NUM || rightNodeType == NODE_LEAF_ID)){
+        // Just do the maths.
+        switch (leftNodeType) {
+            case NODE_LEAF_ID: {
+                emitLoadSymbol(emitter, "rax", leftNode);
+                break;
+            }
+            case NODE_LEAF_NUM: {
+                emitLoadNum(emitter, "rax", leftNode);
+                break;
+            }
+        }
+        switch (rightNodeType) {
+            case NODE_LEAF_ID: {
+                emitLoadSymbol(emitter, "rbx", rightNode);
+                break;
+            }
+            case NODE_LEAF_NUM: {
+                emitLoadNum(emitter, "rbx", rightNode);
+                break;
+            }
+        }
+
+    } else if((leftNodeType != NODE_LEAF_NUM && leftNodeType != NODE_LEAF_ID) && (rightNodeType == NODE_LEAF_NUM || rightNodeType == NODE_LEAF_ID)){
+        EmitBinaryOperation(emitter, scope, leftNode);
+        fprintf(emitter->outputFile, "mov rbx, r13\n");
+        switch (rightNodeType) {
+            case NODE_LEAF_ID: {
+                emitLoadSymbol(emitter, "rbx", rightNode);
+                break;
+            }
+            case NODE_LEAF_NUM: {
+                emitLoadNum(emitter, "rbx", rightNode);
+                break;
+            }
+        }
+    } else if((rightNodeType != NODE_LEAF_NUM && rightNodeType != NODE_LEAF_ID) && (leftNodeType == NODE_LEAF_NUM || leftNodeType == NODE_LEAF_ID)){
+        EmitBinaryOperation(emitter, scope, rightNode);
+        fprintf(emitter->outputFile, "mov rbx, r13\n");
+        switch (leftNodeType) {
+            case NODE_LEAF_ID: {
+                emitLoadSymbol(emitter, "rax", leftNode);
+                break;
+            }
+            case NODE_LEAF_NUM: {
+                emitLoadNum(emitter, "rax", leftNode);
+                break;
+            }
+        }
+    } else {
+        EmitBinaryOperation(emitter, scope, leftNode);
+        fprintf(emitter->outputFile, "mov r14, r13");
+        EmitBinaryOperation(emitter, scope, rightNode);
+        fprintf(emitter->outputFile, "mov rax, r14\n");
+        fprintf(emitter->outputFile, "mov rbx, r13\n");
+    }
+    if(binNodeType == NODE_PLUS || binNodeType == NODE_MINUS){
+        fprintf(emitter->outputFile, "%s rax, rbx\n", opNASMIns[binNodeType]);
+        fprintf(emitter->outputFile, "mov r13, rax\n");
+    }
+}
+
 
 char* ReadInputFile(Arena* arena, const char* fileName){
     FILE* fp = fopen(fileName, "rb");
