@@ -2183,6 +2183,7 @@ void ParseCMDArgs(int numArgs, char* args[]){
 
 // I think I understood why SSAs are important, especially for a serious language where we may want to do optmizations, even naive ones we can think of ourselves, or more complex ones that have been documented and are shared knowledge.
 
+// TODO : IDEAS -> Println and functions.
 int main(int numArgs, char* args[]){
     ParseCMDArgs(numArgs, args);
     Arena inputFileArena;
