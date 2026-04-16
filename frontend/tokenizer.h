@@ -40,11 +40,6 @@ typedef struct{
 
 DFA* CreateDFA(Arena* arena);
 Tokenizer* CreateTokenizer(Arena* arena, const char* inputStream);
-void SkipSpaces(DFA* dfa, Tokenizer* tokenizer);
-TokenInfo TokenizeNumber(DFA* dfa, Tokenizer* tokenizer);
-TokenInfo TokenizeString(DFA* dfa, Tokenizer* tokenizer);
-TokenInfo TokenizeOp(DFA* dfa, Tokenizer* tokenizer);
-void AnalyzeState(DFA* dfa, Tokenizer* tokenizer, TokenInfo info);
 Tokens* StartTokenizing(Arena* arena, DFA* dfa, Tokenizer* tokenizer);
 void printTokens(Tokens* tokens);
 

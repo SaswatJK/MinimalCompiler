@@ -90,6 +90,11 @@ St\In | Digit | Operator | Space | Char |
 
 */
 
+void SkipSpaces(DFA* dfa, Tokenizer* tokenizer);
+TokenInfo TokenizeNumber(DFA* dfa, Tokenizer* tokenizer);
+TokenInfo TokenizeString(DFA* dfa, Tokenizer* tokenizer);
+TokenInfo TokenizeOp(DFA* dfa, Tokenizer* tokenizer);
+void AnalyzeState(DFA* dfa, Tokenizer* tokenizer, TokenInfo info);
 
 DFA* CreateDFA(Arena* arena){
     DFA* tempDFA;
@@ -354,7 +359,7 @@ Tokens* StartTokenizing(Arena* arena, DFA* dfa, Tokenizer* tokenizer){
 }
 
 void printTokens(Tokens* tokens){
-    for(uint i = 0; i < tokens->numTokens; i++){
+    for(u32 i = 0; i < tokens->numTokens; i++){
         TOKEN_TYPE type = tokens->tokens[i].type;
         if(type == TOKEN_NUMBER){
             fprintf(stderr, "Token %d : %s : %"PRId64"\n", i, TokenNames[tokens->tokens[i].type], tokens->tokens[i].TokenValue.numValue);
@@ -369,5 +374,3 @@ void printTokens(Tokens* tokens){
         }
     }
 }
-
-

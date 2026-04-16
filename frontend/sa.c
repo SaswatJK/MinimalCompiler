@@ -5,6 +5,15 @@
 // Remember the stack state everytime we go inside a new block. // Also remember in which scope the analysis is taking place, such that redefinition doesn't cause errors.
 // Anything less than the scope pointer is from a scope that is without-it. It can still access that variable, but it can also replace it.
 
+_Bool AnalyzeStmnt(SymbolStack* stack, i16 currentScopePointer, ASTNode* node);
+void AnalyzeID(SymbolStack* stack, i16 currentScopePointer, ASTNode* node, _Bool toPush);
+_Bool AnalyzeAssignment(SymbolStack* stack, i16 currentScopePointer, ASTNode* node);
+_Bool AnalyzeBinaryOp(SymbolStack* stack, i16 currentScopePointer, ASTNode* node);
+_Bool AnalyzeCompOp(SymbolStack* stack, i16 currentScopePointer, ASTNode* node);
+_Bool AnalyzeIfElse(SymbolStack* stack, i16 currentScopePointer, ASTNode* node);
+_Bool AnalyzePrint(SymbolStack* stack, i16 currentScopePointer, ASTNode* node);
+_Bool AnalyzeBlock(SymbolStack* stack, i16 currentScopePointer, ASTNode* node);
+
 void AnalyzeID(SymbolStack* stack, i16 currentScopePointer, ASTNode* node, _Bool toPush){
     Symbol ID;
     ID.name = &node->Value.ID.Name;
